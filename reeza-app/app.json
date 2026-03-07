@@ -1,0 +1,20 @@
+{
+  "expo": {
+    "name": "Reeza",
+    "slug": "reeza",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "platforms": ["ios", "android", "web"],
+    "jsEngine": "hermes",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.example.reeza"
+    },
+    "android": {
+      "package": "com.example.reeza"
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}
