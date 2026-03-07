@@ -92,7 +92,7 @@ async function fetchCrossRefCitations(doi) {
       `https://api.crossref.org/works/${encodeURIComponent(doi)}`,
       {
         headers: {
-          "User-Agent": "Reeza/1.0 (mailto:info@researchhub.io)",
+          "User-Agent": "Reeza/1.0 (mailto:info@Reeza.io)",
         },
       }
     );

@@ -125,7 +125,7 @@ async function fetchORCID(orcidId) {
 async function fetchCrossRefCitations(doi) {
   try {
     const res = await fetch(`https://api.crossref.org/works/${encodeURIComponent(doi)}`, {
-      headers: { "User-Agent": "ResearchHub/2.0 (mailto:info@researchhub.io)" }
+      headers: { "User-Agent": "Reeza/2.0 (mailto:info@Reeza.io)" }
     });
     if (!res.ok) return 0;
     const data = await res.json();
@@ -264,7 +264,7 @@ const INP = { width: "100%", background: "rgba(255,255,255,0.04)", border: "1px 
 const SEL = { ...INP, cursor: "pointer" };
 
 /* ─── STORAGE HELPERS ────────────────────────────────────── */
-const STORAGE_KEY = "researchhub_user_data";
+const STORAGE_KEY = "Reeza_user_data";
 function saveToStorage(data) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...data, lastSaved: new Date().toISOString() }));
@@ -792,7 +792,7 @@ function LoginModal({ onComplete }) {
           <>
             <div style={{ fontSize: 32, marginBottom: 20 }}>👋</div>
             <h1 style={{ fontSize: 24, fontWeight: 700, color: "#e2e8f0", marginBottom: 14, fontFamily: "'Syne',sans-serif" }}>
-              Welcome to ResearchHub
+              Welcome to Reeza
             </h1>
             <p style={{ fontSize: 14, color: "#64748b", marginBottom: 28, lineHeight: 1.6 }}>
               Your personal research portfolio & publication tracker. Let's get you set up!
@@ -877,7 +877,7 @@ function LoginModal({ onComplete }) {
               All Set!
             </h2>
             <p style={{ fontSize: 13, color: "#64748b", marginBottom: 24 }}>
-              Welcome {form.name}! Your profile is ready. Let's explore ResearchHub.
+              Welcome {form.name}! Your profile is ready. Let's explore Reeza.
             </p>
           </>
         )}
