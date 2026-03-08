@@ -32,8 +32,10 @@ export default function AuthScreen({ signIn, signUp }) {
   return (
     <div
       style={{
-        minHeight: "100vh",
-        width: "100%",
+        position: "fixed",
+        inset: 0,
+        width: "100vw",
+        height: "100vh",
         boxSizing: "border-box",
         background: "linear-gradient(160deg, #04080f 0%, #0a0e18 50%, #04080f 100%)",
         display: "flex",
@@ -41,6 +43,7 @@ export default function AuthScreen({ signIn, signUp }) {
         justifyContent: "center",
         padding: 24,
         fontFamily: "'Syne', sans-serif",
+        zIndex: 9999,
       }}
     >
       <div
