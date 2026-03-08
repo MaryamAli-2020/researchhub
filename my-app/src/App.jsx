@@ -1,4 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
+import { fetchUserData, saveUserData } from "./api-client.js";
+import { useAuth } from "./AuthContext.jsx";
+import AuthScreen from "./AuthScreen.jsx";
 
 /* ─── STYLES ─────────────────────────────────────────────── */
 const CSS = `
@@ -97,7 +100,6 @@ const prioColor = p => ({ High:"#f87171", Medium:A, Low:"#475569" }[p] || "#4755
 async function fetchORCID(orcidId) {
   const base = `https://pub.orcid.org/v3.0/${orcidId}`;
   const headers = { Accept: "application/json" };
-  // Fetch works summary
   const res = await fetch(`${base}/works`, { headers });
   if (!res.ok) throw new Error(`ORCID error: ${res.status}`);
   const data = await res.json();
@@ -157,21 +159,16 @@ function parseZenodoHit(h) {
   const doi = h.doi || h.metadata?.doi || h.conceptdoi || "";
   const year = (h.metadata?.publication_date || h.created || "").slice(0, 4);
   return {
-    id: `zenodo-${h.id}`,
-    type: mapped,
+    id: `zenodo-${h.id}`, type: mapped,
     title: h.metadata?.title || h.title || "Untitled",
     platform: "Zenodo", year: year ? +year : null,
-    citations: 0,
-    downloads: h.stats?.downloads || 0,
-    stars: 0, doi,
-    version: h.metadata?.version || "",
-    source: "zenodo"
+    citations: 0, downloads: h.stats?.downloads || 0,
+    stars: 0, doi, version: h.metadata?.version || "", source: "zenodo"
   };
 }
 
 async function fetchZenodo(tokenOrUsername, isUsername = false) {
   if (isUsername) {
-    // Public search by creator name — no token needed
     const url = `https://zenodo.org/api/records?q=creators.name:${encodeURIComponent(tokenOrUsername)}&sort=mostrecent&size=40`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Zenodo error: ${res.status}`);
@@ -217,9 +214,7 @@ function Chip({ color, children, small }) {
 }
 
 function SkeletonRow() {
-  return (
-    <div style={{ height: 56, borderRadius: 12, marginBottom: 8 }} className="shimmer" />
-  );
+  return <div style={{ height: 56, borderRadius: 12, marginBottom: 8 }} className="shimmer" />;
 }
 
 function Avatar({ name = "?", size = 40 }) {
@@ -266,20 +261,12 @@ const SEL = { ...INP, cursor: "pointer" };
 /* ─── STORAGE HELPERS ────────────────────────────────────── */
 const STORAGE_KEY = "Reeza_user_data";
 function saveToStorage(data) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...data, lastSaved: new Date().toISOString() }));
-  } catch (e) {
-    console.error("Storage error:", e);
-  }
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...data, lastSaved: new Date().toISOString() })); }
+  catch (e) { console.error("Storage error:", e); }
 }
 function loadFromStorage() {
-  try {
-    const data = localStorage.getItem(STORAGE_KEY);
-    return data ? JSON.parse(data) : null;
-  } catch (e) {
-    console.error("Storage error:", e);
-    return null;
-  }
+  try { const d = localStorage.getItem(STORAGE_KEY); return d ? JSON.parse(d) : null; }
+  catch (e) { console.error("Storage error:", e); return null; }
 }
 
 /* ─── METRIC CARD ────────────────────────────────────────── */
@@ -301,42 +288,35 @@ function MetricCard({ icon, value, label, sub, color, delay = 0 }) {
 
 /* ─── DASHBOARD VIEW ─────────────────────────────────────── */
 function DashboardView({ profile, outputs, todos, integrations }) {
-  const pubs = outputs.filter(o => ["Paper", "Preprint", "Report"].includes(o.type)).length;
+  const pubs = outputs.filter(o => ["Paper","Preprint","Report"].includes(o.type)).length;
   const datasets = outputs.filter(o => o.type === "Dataset").length;
-  const repos = outputs.filter(o => ["Code", "Software"].includes(o.type)).length;
-  const talks = outputs.filter(o => ["Talk", "Poster"].includes(o.type)).length;
+  const repos = outputs.filter(o => ["Code","Software"].includes(o.type)).length;
+  const talks = outputs.filter(o => ["Talk","Poster"].includes(o.type)).length;
   const citations = outputs.reduce((s, o) => s + (o.citations || 0), 0);
   const downloads = outputs.reduce((s, o) => s + (o.downloads || 0), 0);
   const stars = outputs.reduce((s, o) => s + (o.stars || 0), 0);
   const dois = outputs.filter(o => o.doi).length;
   const pending = todos.filter(t => !t.done);
   const highPrio = pending.filter(t => t.priority === "High");
-
   const byType = ["Paper","Preprint","Dataset","Code","Software","Talk","Poster","Report"]
-    .map(t => ({ t, n: outputs.filter(o => o.type === t).length }))
-    .filter(x => x.n > 0);
+    .map(t => ({ t, n: outputs.filter(o => o.type === t).length })).filter(x => x.n > 0);
   const maxN = Math.max(...byType.map(x => x.n), 1);
-
-  const connectedSources = Object.values(integrations).filter(i => i.status === "ok").map(i => i.platform);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 26 }}>
-      {/* Metrics grid */}
       <section>
         <SectionLabel>Research Footprint · {outputs.length} total outputs</SectionLabel>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(115px,1fr))", gap: 10 }}>
-          <MetricCard icon="📄" value={pubs}      label="Publications" sub="papers & preprints"                     color={V} delay={0}   />
+          <MetricCard icon="📄" value={pubs}      label="Publications" sub="papers & preprints"                        color={V} delay={0}   />
           <MetricCard icon="📊" value={datasets}  label="Datasets"     sub={`${downloads.toLocaleString()} downloads`} color={G} delay={50}  />
-          <MetricCard icon="💻" value={repos}     label="Code"         sub={`${stars} ⭐`}                            color={A} delay={100} />
-          <MetricCard icon="🎤" value={talks}     label="Talks"        sub="& posters"                              color={P} delay={150} />
-          <MetricCard icon="📎" value={citations} label="Citations"    sub="combined"                               color={B} delay={200} />
-          <MetricCard icon="🔗" value={dois}      label="DOIs"         sub="tracked"                                color="#fb923c" delay={250} />
+          <MetricCard icon="💻" value={repos}     label="Code"         sub={`${stars} ⭐`}                             color={A} delay={100} />
+          <MetricCard icon="🎤" value={talks}     label="Talks"        sub="& posters"                                 color={P} delay={150} />
+          <MetricCard icon="📎" value={citations} label="Citations"    sub="combined"                                  color={B} delay={200} />
+          <MetricCard icon="🔗" value={dois}      label="DOIs"         sub="tracked"                                   color="#fb923c" delay={250} />
         </div>
       </section>
 
-      {/* Two col */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-        {/* Breakdown */}
         <div className="card fade-up" style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 16, padding: "18px 20px", animationDelay: "80ms" }}>
           <SectionLabel small>Output Types</SectionLabel>
           {byType.length === 0
@@ -353,7 +333,6 @@ function DashboardView({ profile, outputs, todos, integrations }) {
           }
         </div>
 
-        {/* Pending todos */}
         <div className="card fade-up" style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 16, padding: "18px 20px", animationDelay: "120ms" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
             <SectionLabel small noMargin>Pending Work</SectionLabel>
@@ -374,15 +353,14 @@ function DashboardView({ profile, outputs, todos, integrations }) {
         </div>
       </div>
 
-      {/* Sources connected */}
       <div className="card fade-up" style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 16, padding: "18px 20px", animationDelay: "160ms" }}>
         <SectionLabel small>Live Data Sources</SectionLabel>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           {[
-            { name: "ORCID", color: "#a6ce39", key: "orcid" },
-            { name: "Zenodo", color: G, key: "zenodo" },
-            { name: "GitHub", color: A, key: "github" },
-            { name: "CrossRef", color: B, key: "crossref" },
+            { name: "ORCID",    color: "#a6ce39", key: "orcid"    },
+            { name: "Zenodo",   color: G,         key: "zenodo"   },
+            { name: "GitHub",   color: A,         key: "github"   },
+            { name: "CrossRef", color: B,         key: "crossref" },
           ].map(s => {
             const st = integrations[s.key]?.status;
             const isOk = st === "ok";
@@ -446,10 +424,8 @@ function ProjectsView({ outputs, setOutputs, integrations, onSync }) {
         </div>
       </div>
 
-      {outputs.length === 0 && !isAnySyncing && (
-        <Empty center>No outputs yet. Connect a source in Integrations or add manually.</Empty>
-      )}
-      {isAnySyncing && [1, 2, 3].map(i => <SkeletonRow key={i} />)}
+      {outputs.length === 0 && !isAnySyncing && <Empty center>No outputs yet. Connect a source in Integrations or add manually.</Empty>}
+      {isAnySyncing && [1,2,3].map(i => <SkeletonRow key={i} />)}
 
       {years.map(year => (
         <div key={year} style={{ marginBottom: 22 }}>
@@ -462,12 +438,26 @@ function ProjectsView({ outputs, setOutputs, integrations, onSync }) {
             const c = typeColor(o.type);
             const isExp = expanded === o.id;
             const srcColor = o.source === "github" ? A : o.source === "zenodo" ? G : o.source === "orcid" ? "#a6ce39" : "#475569";
+            const inPortfolio = !!o.inPortfolio;
             return (
-              <div key={o.id} style={{ background: "rgba(255,255,255,0.025)", border: `1px solid ${isExp ? c + "44" : "rgba(255,255,255,0.07)"}`, borderRadius: 13, overflow: "hidden", marginBottom: 7, transition: "border-color 0.2s" }}>
-                <div onClick={() => setExpanded(isExp ? null : o.id)} style={{ padding: "12px 15px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12 }}>
-                  <div style={{ width: 34, height: 34, borderRadius: 9, background: `${c}18`, border: `1px solid ${c}28`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, flexShrink: 0 }}>
-                    {typeIcon[o.type] || "📄"}
-                  </div>
+              <div key={o.id} style={{ background: inPortfolio ? "rgba(139,92,246,0.06)" : "rgba(255,255,255,0.025)", border: `1px solid ${inPortfolio ? V+"44" : isExp ? c+"44" : "rgba(255,255,255,0.07)"}`, borderRadius: 13, overflow: "hidden", marginBottom: 7, transition: "border-color 0.2s, background 0.2s" }}>
+                <div style={{ padding: "12px 15px", display: "flex", alignItems: "center", gap: 12 }}>
+
+                  {/* Portfolio checkbox */}
+                  <button
+                    onClick={e => { e.stopPropagation(); setOutputs(p => p.map(x => x.id === o.id ? { ...x, inPortfolio: !x.inPortfolio } : x)); }}
+                    title={inPortfolio ? "Remove from portfolio" : "Add to portfolio"}
+                    style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: `2px solid ${inPortfolio ? V : "rgba(255,255,255,0.15)"}`, background: inPortfolio ? V : "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", transition: "all 0.18s", boxShadow: inPortfolio ? `0 0 8px ${V}66` : "none" }}
+                  >
+                    {inPortfolio && (
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                        <path d="M2 6l3 3 5-5" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    )}
+                  </button>
+
+                  <div onClick={() => setExpanded(isExp ? null : o.id)} style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, cursor: "pointer", minWidth: 0 }}>
+                  <div style={{ width: 34, height: 34, borderRadius: 9, background: `${c}18`, border: `1px solid ${c}28`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, flexShrink: 0 }}>{typeIcon[o.type] || "📄"}</div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap", marginBottom: 3 }}>
                       <Chip color={c} small>{o.type}</Chip>
@@ -482,6 +472,7 @@ function ProjectsView({ outputs, setOutputs, integrations, onSync }) {
                     {o.stars > 0 && <span style={{ fontSize: 11, color: A, fontFamily: "'JetBrains Mono',monospace" }}>⭐{o.stars}</span>}
                     <span style={{ color: "#334155", fontSize: 16, transform: isExp ? "rotate(90deg)" : "none", transition: "transform 0.2s" }}>›</span>
                   </div>
+                  </div>{/* end clickable row */}
                 </div>
                 {isExp && (
                   <div style={{ padding: "0 15px 14px", borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 12 }}>
@@ -545,48 +536,23 @@ function IntegrationsView({ integrations, creds, setCreds, onSync }) {
   }
 
   const sources = [
-    {
-      key: "orcid", name: "ORCID", icon: "🔬", color: "#a6ce39",
-      desc: "Pulls all your publications, preprints and datasets from your public ORCID record.",
-      apiNote: "Public API · No authentication required",
-      field: { label: "ORCID ID", key: "orcidId", placeholder: "0000-0001-2345-6789", type: "text" }
-    },
-    {
-      key: "zenodo", name: "Zenodo", icon: "🗄️", color: G,
-      desc: "Imports all your Zenodo deposits with download statistics.",
-      apiNote: "Zenodo REST API · Requires personal access token",
-      field: { label: "Personal Access Token", key: "zenodoToken", placeholder: "your token from zenodo.org/account/settings/applications", type: "password" }
-    },
-    {
-      key: "github", name: "GitHub", icon: "🐙", color: A,
-      desc: "Fetches your public repos with star counts, languages and descriptions.",
-      apiNote: "GitHub REST API · Username only (public repos)",
-      field: { label: "GitHub Username", key: "githubUsername", placeholder: "your-github-username", type: "text" }
-    },
-    {
-      key: "crossref", name: "CrossRef", icon: "🔗", color: B,
-      desc: "Auto-enriches citation counts for all outputs that have a DOI.",
-      apiNote: "CrossRef API · Runs automatically when outputs have DOIs",
-      field: null
-    },
+    { key: "orcid",    name: "ORCID",    icon: "🔬", color: "#a6ce39", desc: "Pulls all your publications, preprints and datasets from your public ORCID record.", apiNote: "Public API · No authentication required",               field: { label: "ORCID ID",              key: "orcidId",        placeholder: "0000-0001-2345-6789",                                          type: "text"     } },
+    { key: "zenodo",   name: "Zenodo",   icon: "🗄️", color: G,         desc: "Imports all your Zenodo deposits with download statistics.",                          apiNote: "Zenodo REST API · Requires personal access token",         field: { label: "Personal Access Token", key: "zenodoToken",    placeholder: "your token from zenodo.org/account/settings/applications",    type: "password" } },
+    { key: "github",   name: "GitHub",   icon: "🐙", color: A,         desc: "Fetches your public repos with star counts, languages and descriptions.",             apiNote: "GitHub REST API · Username only (public repos)",           field: { label: "GitHub Username",       key: "githubUsername", placeholder: "your-github-username",                                         type: "text"     } },
+    { key: "crossref", name: "CrossRef", icon: "🔗", color: B,         desc: "Auto-enriches citation counts for all outputs that have a DOI.",                     apiNote: "CrossRef API · Runs automatically when outputs have DOIs", field: null },
   ];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <SectionLabel>Live Data Sources</SectionLabel>
-
       {sources.map(s => {
         const state = integrations[s.key] || {};
         const isOk = state.status === "ok";
         const isLoading = state.status === "loading";
         const isError = state.status === "error";
         const hasKey = s.key === "crossref" || (s.field && localCreds[s.field.key]);
-
         return (
-          <div key={s.key} className="card" style={{
-            background: "rgba(255,255,255,0.025)", border: `1px solid ${isOk ? s.color + "35" : "rgba(255,255,255,0.07)"}`,
-            borderRadius: 16, padding: "18px 20px", transition: "border-color 0.2s"
-          }}>
+          <div key={s.key} className="card" style={{ background: "rgba(255,255,255,0.025)", border: `1px solid ${isOk ? s.color+"35" : "rgba(255,255,255,0.07)"}`, borderRadius: 16, padding: "18px 20px", transition: "border-color 0.2s" }}>
             <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
               <div style={{ fontSize: 26, flexShrink: 0, marginTop: 2 }}>{s.icon}</div>
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -597,8 +563,8 @@ function IntegrationsView({ integrations, creds, setCreds, onSync }) {
                     <div style={{ fontSize: 11, color: "#334155", fontFamily: "'JetBrains Mono',monospace" }}>{s.apiNote}</div>
                   </div>
                   <div style={{ textAlign: "right", flexShrink: 0 }}>
-                    {isOk && <Chip color={s.color}>✓ Connected</Chip>}
-                    {isError && <Chip color="#f87171">⚠ Error</Chip>}
+                    {isOk      && <Chip color={s.color}>✓ Connected</Chip>}
+                    {isError   && <Chip color="#f87171">⚠ Error</Chip>}
                     {isLoading && <div style={{ display: "flex", alignItems: "center", gap: 6 }}><Spinner size={12} color={s.color} /></div>}
                     {!isOk && !isLoading && <Chip color="#475569">Not Set</Chip>}
                   </div>
@@ -607,42 +573,23 @@ function IntegrationsView({ integrations, creds, setCreds, onSync }) {
             </div>
             {hasKey && (
               <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
-                <button onClick={() => setShowSetup(s.key)} style={{ padding: "8px 14px", background: `${s.color}30`, border: `1px solid ${s.color}50`, borderRadius: 8, color: s.color, fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
-                  {isOk ? "Update" : "Configure"}
-                </button>
+                <button onClick={() => setShowSetup(s.key)} style={{ padding: "8px 14px", background: `${s.color}30`, border: `1px solid ${s.color}50`, borderRadius: 8, color: s.color, fontSize: 11, fontWeight: 600, cursor: "pointer" }}>{isOk ? "Update" : "Configure"}</button>
                 {isOk && <button onClick={() => onSync(s.key, localCreds)} style={{ marginLeft: 8, padding: "8px 14px", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, color: "#94a3b8", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Sync Now</button>}
                 {isError && state.error && <div style={{ marginTop: 8, fontSize: 11, color: "#f87171", padding: "8px 12px", background: "rgba(248,113,113,0.1)", borderRadius: 6 }}>{state.error}</div>}
               </div>
             )}
             {!hasKey && s.field && (
               <div style={{ marginTop: 14 }}>
-                <input
-                  type={s.field.type}
-                  value={localCreds[s.field.key] || ""}
-                  onChange={e => setLocalCreds(c => ({ ...c, [s.field.key]: e.target.value }))}
-                  placeholder={s.field.placeholder}
-                  style={{ ...INP, marginBottom: 10 }}
-                />
-                <button onClick={() => saveAndSync(s.key)} style={{ padding: "8px 14px", background: `${s.color}30`, border: `1px solid ${s.color}50`, borderRadius: 8, color: s.color, fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
-                  Save & Sync
-                </button>
+                <input type={s.field.type} value={localCreds[s.field.key] || ""} onChange={e => setLocalCreds(c => ({ ...c, [s.field.key]: e.target.value }))} placeholder={s.field.placeholder} style={{ ...INP, marginBottom: 10 }} />
+                <button onClick={() => saveAndSync(s.key)} style={{ padding: "8px 14px", background: `${s.color}30`, border: `1px solid ${s.color}50`, borderRadius: 8, color: s.color, fontSize: 11, fontWeight: 600, cursor: "pointer" }}>Save & Sync</button>
               </div>
             )}
             {showSetup === s.key && s.field && (
               <Modal title={`Update ${s.name}`} onClose={() => setShowSetup(null)}>
                 <Field label={s.field.label}>
-                  <input
-                    type={s.field.type}
-                    value={localCreds[s.field.key] || ""}
-                    onChange={e => setLocalCreds(c => ({ ...c, [s.field.key]: e.target.value }))}
-                    placeholder={s.field.placeholder}
-                    style={INP}
-                    autoFocus
-                  />
+                  <input type={s.field.type} value={localCreds[s.field.key] || ""} onChange={e => setLocalCreds(c => ({ ...c, [s.field.key]: e.target.value }))} placeholder={s.field.placeholder} style={INP} autoFocus />
                 </Field>
-                <button onClick={() => saveAndSync(s.key)} style={{ width: "100%", padding: "11px", background: `${s.color}22`, border: `1px solid ${s.color}55`, borderRadius: 12, color: s.color, fontSize: 14, fontWeight: 700, cursor: "pointer", marginTop: 6 }}>
-                  Save & Sync
-                </button>
+                <button onClick={() => saveAndSync(s.key)} style={{ width: "100%", padding: "11px", background: `${s.color}22`, border: `1px solid ${s.color}55`, borderRadius: 12, color: s.color, fontSize: 14, fontWeight: 700, cursor: "pointer", marginTop: 6 }}>Save & Sync</button>
               </Modal>
             )}
           </div>
@@ -663,14 +610,8 @@ function TodoView({ todos, setTodos }) {
     setShowAdd(false);
     setForm({ title: "", priority: "Medium", due: "" });
   }
-
-  function toggle(id) {
-    setTodos(p => p.map(t => t.id === id ? { ...t, done: !t.done } : t));
-  }
-
-  function remove(id) {
-    setTodos(p => p.filter(t => t.id !== id));
-  }
+  function toggle(id) { setTodos(p => p.map(t => t.id === id ? { ...t, done: !t.done } : t)); }
+  function remove(id) { setTodos(p => p.filter(t => t.id !== id)); }
 
   const pending = todos.filter(t => !t.done);
   const done = todos.filter(t => t.done);
@@ -679,55 +620,32 @@ function TodoView({ todos, setTodos }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <SectionLabel noMargin>{todos.length} Tasks</SectionLabel>
-        <button onClick={() => setShowAdd(true)} className="btn" style={{
-          padding: "8px 16px", background: `${V}20`, border: `1px solid ${V}44`,
-          borderRadius: 10, color: "#a78bfa", fontSize: 12, fontWeight: 700, cursor: "pointer"
-        }}>+ Add Task</button>
+        <button onClick={() => setShowAdd(true)} className="btn" style={{ padding: "8px 16px", background: `${V}20`, border: `1px solid ${V}44`, borderRadius: 10, color: "#a78bfa", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>+ Add Task</button>
       </div>
 
       <div>
         <div style={{ fontSize: 11, fontWeight: 700, color: "#475569", marginBottom: 10, fontFamily: "'JetBrains Mono',monospace", letterSpacing: "0.08em" }}>PENDING</div>
-        {pending.length === 0
-          ? <Empty>All caught up! 🎉</Empty>
-          : pending.map(t => (
-            <div key={t.id} style={{
-              display: "flex", gap: 12, padding: "10px 14px", marginBottom: 8,
-              background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)",
-              borderRadius: 10, alignItems: "flex-start"
-            }}>
-              <input
-                type="checkbox"
-                checked={t.done}
-                onChange={() => toggle(t.id)}
-                style={{ marginTop: 3, cursor: "pointer", accentColor: prioColor(t.priority) }}
-              />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, color: "#e2e8f0", marginBottom: 2 }}>{t.title}</div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <Chip color={prioColor(t.priority)} small>{t.priority}</Chip>
-                  {t.due && <span style={{ fontSize: 11, color: "#475569", fontFamily: "'JetBrains Mono',monospace" }}>{t.due}</span>}
-                </div>
+        {pending.length === 0 ? <Empty>All caught up! 🎉</Empty> : pending.map(t => (
+          <div key={t.id} style={{ display: "flex", gap: 12, padding: "10px 14px", marginBottom: 8, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: 10, alignItems: "flex-start" }}>
+            <input type="checkbox" checked={t.done} onChange={() => toggle(t.id)} style={{ marginTop: 3, cursor: "pointer", accentColor: prioColor(t.priority) }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, color: "#e2e8f0", marginBottom: 2 }}>{t.title}</div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <Chip color={prioColor(t.priority)} small>{t.priority}</Chip>
+                {t.due && <span style={{ fontSize: 11, color: "#475569", fontFamily: "'JetBrains Mono',monospace" }}>{t.due}</span>}
               </div>
-              <button onClick={() => remove(t.id)} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer", fontSize: 16 }}>×</button>
             </div>
-          ))}
+            <button onClick={() => remove(t.id)} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer", fontSize: 16 }}>×</button>
+          </div>
+        ))}
       </div>
 
       {done.length > 0 && (
         <div>
           <div style={{ fontSize: 11, fontWeight: 700, color: "#475569", marginBottom: 10, fontFamily: "'JetBrains Mono',monospace", letterSpacing: "0.08em" }}>COMPLETED</div>
           {done.map(t => (
-            <div key={t.id} style={{
-              display: "flex", gap: 12, padding: "10px 14px", marginBottom: 8,
-              background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)",
-              borderRadius: 10, alignItems: "flex-start", opacity: 0.6
-            }}>
-              <input
-                type="checkbox"
-                checked={t.done}
-                onChange={() => toggle(t.id)}
-                style={{ marginTop: 3, cursor: "pointer", accentColor: G }}
-              />
+            <div key={t.id} style={{ display: "flex", gap: 12, padding: "10px 14px", marginBottom: 8, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: 10, alignItems: "flex-start", opacity: 0.6 }}>
+              <input type="checkbox" checked={t.done} onChange={() => toggle(t.id)} style={{ marginTop: 3, cursor: "pointer", accentColor: G }} />
               <div style={{ flex: 1, minWidth: 0, textDecoration: "line-through" }}>
                 <div style={{ fontSize: 13, color: "#64748b", marginBottom: 2 }}>{t.title}</div>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -755,187 +673,143 @@ function TodoView({ todos, setTodos }) {
   );
 }
 
-/* ─── EMPTY STATE ────────────────────────────────────────── */
+/* ─── HELPERS ────────────────────────────────────────────── */
 function Empty({ children, center }) {
   return <div style={{ padding: "28px 14px", textAlign: center ? "center" : "left", color: "#334155", fontSize: 13, fontStyle: "italic" }}>{children}</div>;
 }
-
-/* ─── SECTION LABEL ──────────────────────────────────────── */
 function SectionLabel({ children, small, noMargin }) {
   return <div style={{ fontSize: small ? 12 : 16, fontWeight: 700, color: "#e2e8f0", marginBottom: noMargin ? 0 : 16, fontFamily: "'Syne',sans-serif" }}>{children}</div>;
 }
 
-/* ─── LOGIN MODAL ────────────────────────────────────────── */
+/* ─── PROFILE SETUP MODAL ────────────────────────────────── */
 function LoginModal({ onComplete }) {
   const [form, setForm] = useState({ name: "", affiliation: "", bio: "" });
-  const [step, setStep] = useState("welcome"); // welcome, form, or done
+  const [step, setStep] = useState("welcome");
 
   function handleSubmit() {
-    if (!form.name.trim() || !form.affiliation.trim()) {
-      alert("Please fill in your name and affiliation");
-      return;
-    }
+    if (!form.name.trim() || !form.affiliation.trim()) { alert("Please fill in your name and affiliation"); return; }
     onComplete(form);
     setStep("done");
   }
 
   return (
-    <div style={{
-      position: "fixed", inset: 0, background: "rgba(0,0,0,0.95)", zIndex: 9999,
-      display: "flex", alignItems: "center", justifyContent: "center", padding: 20
-    }}>
-      <div style={{
-        background: "#0d1220", border: "2px solid " + V + "55", borderRadius: 24, padding: "40px 50px",
-        maxWidth: 520, textAlign: "center", animation: "fadeUp 0.5s ease both"
-      }}>
-        {step === "welcome" && (
-          <>
-            <div style={{ fontSize: 32, marginBottom: 20 }}>👋</div>
-            <h1 style={{ fontSize: 24, fontWeight: 700, color: "#e2e8f0", marginBottom: 14, fontFamily: "'Syne',sans-serif" }}>
-              Welcome to Reeza
-            </h1>
-            <p style={{ fontSize: 14, color: "#64748b", marginBottom: 28, lineHeight: 1.6 }}>
-              Your personal research portfolio & publication tracker. Let's get you set up!
-            </p>
-            <button onClick={() => setStep("form")} style={{
-              width: "100%", padding: "12px", background: `${V}22`, border: `1px solid ${V}55`,
-              borderRadius: 12, color: "#a78bfa", fontSize: 14, fontWeight: 700, cursor: "pointer"
-            }}>
-              Get Started
-            </button>
-          </>
-        )}
-
-        {step === "form" && (
-          <>
-            <h2 style={{ fontSize: 18, fontWeight: 700, color: "#e2e8f0", marginBottom: 24, fontFamily: "'Syne',sans-serif" }}>
-              Create Your Profile
-            </h2>
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#475569", marginBottom: 8, fontFamily: "'JetBrains Mono',monospace", letterSpacing: "0.08em", textTransform: "uppercase" }}>
-                Full Name *
-              </div>
-              <input
-                value={form.name}
-                onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                placeholder="Dr. Jane Smith"
-                style={{
-                  width: "100%", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)",
-                  borderRadius: 10, padding: "10px 13px", color: "#e2e8f0", fontSize: 13, outline: "none"
-                }}
-                autoFocus
-              />
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.95)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ background: "#0d1220", border: "2px solid " + V + "55", borderRadius: 24, padding: "40px 50px", maxWidth: 520, textAlign: "center", animation: "fadeUp 0.5s ease both" }}>
+        {step === "welcome" && <>
+          <div style={{ fontSize: 32, marginBottom: 20 }}>👋</div>
+          <h1 style={{ fontSize: 24, fontWeight: 700, color: "#e2e8f0", marginBottom: 14, fontFamily: "'Syne',sans-serif" }}>Welcome to Reeza</h1>
+          <p style={{ fontSize: 14, color: "#64748b", marginBottom: 28, lineHeight: 1.6 }}>Your personal research portfolio & publication tracker. Let's get you set up!</p>
+          <button onClick={() => setStep("form")} style={{ width: "100%", padding: "12px", background: `${V}22`, border: `1px solid ${V}55`, borderRadius: 12, color: "#a78bfa", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Get Started</button>
+        </>}
+        {step === "form" && <>
+          <h2 style={{ fontSize: 18, fontWeight: 700, color: "#e2e8f0", marginBottom: 24, fontFamily: "'Syne',sans-serif" }}>Create Your Profile</h2>
+          {[
+            { label: "Full Name *",      key: "name",        placeholder: "Dr. Jane Smith",               type: "input"    },
+            { label: "Affiliation *",    key: "affiliation", placeholder: "MIT, Stanford, etc.",           type: "input"    },
+            { label: "Bio (optional)",   key: "bio",         placeholder: "AI & ML Research, ...",        type: "textarea" },
+          ].map(f => (
+            <div key={f.key} style={{ marginBottom: 16, textAlign: "left" }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#475569", marginBottom: 8, fontFamily: "'JetBrains Mono',monospace", letterSpacing: "0.08em", textTransform: "uppercase" }}>{f.label}</div>
+              {f.type === "textarea"
+                ? <textarea value={form[f.key]} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))} placeholder={f.placeholder} style={{ ...INP, fontFamily: "inherit", minHeight: 70, resize: "vertical" }} />
+                : <input value={form[f.key]} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))} placeholder={f.placeholder} style={INP} autoFocus={f.key === "name"} />
+              }
             </div>
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#475569", marginBottom: 8, fontFamily: "'JetBrains Mono',monospace", letterSpacing: "0.08em", textTransform: "uppercase" }}>
-                Affiliation *
-              </div>
-              <input
-                value={form.affiliation}
-                onChange={e => setForm(f => ({ ...f, affiliation: e.target.value }))}
-                placeholder="MIT, Stanford, etc."
-                style={{
-                  width: "100%", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)",
-                  borderRadius: 10, padding: "10px 13px", color: "#e2e8f0", fontSize: 13, outline: "none"
-                }}
-              />
-            </div>
-            <div style={{ marginBottom: 28 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#475569", marginBottom: 8, fontFamily: "'JetBrains Mono',monospace", letterSpacing: "0.08em", textTransform: "uppercase" }}>
-                Bio (optional)
-              </div>
-              <textarea
-                value={form.bio}
-                onChange={e => setForm(f => ({ ...f, bio: e.target.value }))}
-                placeholder="AI & ML Research, Climate Science, etc."
-                style={{
-                  width: "100%", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)",
-                  borderRadius: 10, padding: "10px 13px", color: "#e2e8f0", fontSize: 13, outline: "none",
-                  fontFamily: "inherit", minHeight: 70, resize: "vertical"
-                }}
-              />
-            </div>
-            <button onClick={handleSubmit} style={{
-              width: "100%", padding: "12px", background: `${V}22`, border: `1px solid ${V}55`,
-              borderRadius: 12, color: "#a78bfa", fontSize: 14, fontWeight: 700, cursor: "pointer", marginBottom: 10
-            }}>
-              Create Profile
-            </button>
-            <button onClick={() => setStep("welcome")} style={{
-              width: "100%", padding: "12px", background: "transparent", border: "1px solid rgba(255,255,255,0.1)",
-              borderRadius: 12, color: "#64748b", fontSize: 14, fontWeight: 600, cursor: "pointer"
-            }}>
-              Back
-            </button>
-          </>
-        )}
-
-        {step === "done" && (
-          <>
-            <div style={{ fontSize: 48, marginBottom: 16 }}>🎉</div>
-            <h2 style={{ fontSize: 18, fontWeight: 700, color: "#e2e8f0", marginBottom: 10, fontFamily: "'Syne',sans-serif" }}>
-              All Set!
-            </h2>
-            <p style={{ fontSize: 13, color: "#64748b", marginBottom: 24 }}>
-              Welcome {form.name}! Your profile is ready. Let's explore Reeza.
-            </p>
-          </>
-        )}
+          ))}
+          <button onClick={handleSubmit} style={{ width: "100%", padding: "12px", background: `${V}22`, border: `1px solid ${V}55`, borderRadius: 12, color: "#a78bfa", fontSize: 14, fontWeight: 700, cursor: "pointer", marginBottom: 10 }}>Create Profile</button>
+          <button onClick={() => setStep("welcome")} style={{ width: "100%", padding: "12px", background: "transparent", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, color: "#64748b", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Back</button>
+        </>}
+        {step === "done" && <>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>🎉</div>
+          <h2 style={{ fontSize: 18, fontWeight: 700, color: "#e2e8f0", marginBottom: 10, fontFamily: "'Syne',sans-serif" }}>All Set!</h2>
+          <p style={{ fontSize: 13, color: "#64748b" }}>Welcome {form.name}! Your profile is ready.</p>
+        </>}
       </div>
     </div>
   );
 }
 
-/* ─── MAIN APP ───────────────────────────────────────────── */
+/* ─── AUTH GATE ──────────────────────────────────────────── */
 export default function App() {
-  // Load from storage on mount
-  const storedData = loadFromStorage();
-  const isFirstVisit = !storedData?.profile;
-  
-  const defaultTodos = [
-    { id: "1", title: "Finish Q1 research paper", priority: "High", due: "2024-03-15", done: false },
-    { id: "2", title: "Update GitHub repos documentation", priority: "Medium", due: "", done: false },
-    { id: "3", title: "Submit dataset to Zenodo", priority: "High", due: "2024-03-20", done: false },
-  ];
+  const { session, loading: authLoading, signIn, signUp } = useAuth();
 
-  const [view, setView] = useState("dashboard");
-  const [showLogin, setShowLogin] = useState(isFirstVisit);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [profile, setProfile] = useState(storedData?.profile || { name: "", affiliation: "", bio: "" });
-  const [outputs, setOutputs] = useState(storedData?.outputs || []);
-  const [todos, setTodos] = useState(storedData?.todos || defaultTodos);
-  const [integrations, setIntegrations] = useState(storedData?.integrations || {
-    orcid: { status: "idle", count: 0, error: null },
-    zenodo: { status: "idle", count: 0, error: null },
-    github: { status: "idle", count: 0, error: null },
-    crossref: { status: "idle", count: 0, error: null },
-  });
-  const [creds, setCreds] = useState(storedData?.creds || {
-    orcidId: "",
-    zenodoToken: "",
-    githubUsername: "",
-  });
-  const [lastSync, setLastSync] = useState(storedData?.lastSync || null);
-
-  function handleLoginComplete(profileData) {
-    setProfile(profileData);
-    setShowLogin(false);
+  if (authLoading) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#04080f", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        <div style={{ width: 28, height: 28, border: "2px solid #8b5cf630", borderTopColor: "#8b5cf6", borderRadius: "50%", animation: "spin 0.7s linear infinite" }} />
+      </div>
+    );
   }
 
-  // Save to storage whenever data changes
+  if (!session) {
+    return <AuthScreen signIn={signIn} signUp={signUp} />;
+  }
+
+  return <AppInner user={session.user} />;
+}
+
+/* ─── MAIN APP ───────────────────────────────────────────── */
+function AppInner({ user }) {
+  const { signOut } = useAuth();
+
+  const storedData = loadFromStorage();
+  const isFirstVisit = !storedData?.profile?.name;
+
+  const defaultTodos = [
+    { id: "1", title: "Finish Q1 research paper",          priority: "High",   due: "2024-03-15", done: false },
+    { id: "2", title: "Update GitHub repos documentation", priority: "Medium", due: "",           done: false },
+    { id: "3", title: "Submit dataset to Zenodo",          priority: "High",   due: "2024-03-20", done: false },
+  ];
+
+  const [view, setView]                 = useState("dashboard");
+  const [showLogin, setShowLogin]       = useState(isFirstVisit);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [profile, setProfile]           = useState(storedData?.profile       || { name: "", affiliation: "", bio: "" });
+  const [outputs, setOutputs]           = useState(storedData?.outputs       || []);
+  const [todos, setTodos]               = useState(storedData?.todos         || defaultTodos);
+  const [integrations, setIntegrations] = useState(storedData?.integrations  || {
+    orcid:    { status: "idle", count: 0, error: null },
+    zenodo:   { status: "idle", count: 0, error: null },
+    github:   { status: "idle", count: 0, error: null },
+    crossref: { status: "idle", count: 0, error: null },
+  });
+  const [creds, setCreds]               = useState(storedData?.creds         || { orcidId: "", zenodoToken: "", githubUsername: "" });
+  const [lastSync, setLastSync]         = useState(storedData?.lastSync      || null);
+
+  // ── Load from Supabase on mount ───────────────────────────
   useEffect(() => {
-    saveToStorage({ profile, outputs, todos, integrations, creds, lastSync });
+    (async () => {
+      try {
+        const serverData = await fetchUserData();
+        if (serverData) {
+          if (serverData.profile?.name)             { setProfile(serverData.profile); setShowLogin(false); }
+          if (Array.isArray(serverData.outputs))      setOutputs(serverData.outputs);
+          if (Array.isArray(serverData.todos))        setTodos(serverData.todos);
+          if (serverData.integrations)                setIntegrations(serverData.integrations);
+          if (serverData.creds)                       setCreds(serverData.creds);
+          if (serverData.lastSync)                    setLastSync(serverData.lastSync);
+        }
+      } catch (err) {
+        console.warn("Could not fetch from Supabase, using local cache:", err);
+      }
+    })();
+  }, [user.id]);
+
+  // ── Save to Supabase + localStorage on every change ───────
+  useEffect(() => {
+    const data = { profile, outputs, todos, integrations, creds, lastSync };
+    saveToStorage(data);
+    saveUserData(null, data).catch(err => console.error("Supabase save error:", err));
   }, [profile, outputs, todos, integrations, creds, lastSync]);
 
-  // Hourly sync
+  // ── Hourly sync ───────────────────────────────────────────
   useEffect(() => {
-    const hourlySync = setInterval(() => {
-      console.log("🔄 Hourly sync triggered...");
+    const timer = setInterval(() => {
       setLastSync(new Date().toISOString());
       sync(null, creds);
-    }, 3600000); // 1 hour in milliseconds
-
-    return () => clearInterval(hourlySync);
+    }, 3600000);
+    return () => clearInterval(timer);
   }, [creds]);
 
   const sync = useCallback(async (platform, localCreds = creds) => {
@@ -954,22 +828,16 @@ export default function App() {
       setIntegrations({ ...newIntegrations });
     };
 
-    if (!platform || platform === "orcid") {
-      if (localCreds.orcidId) await doSync("orcid", () => fetchORCID(localCreds.orcidId).then(enrichWithCitations));
-    }
-    if (!platform || platform === "zenodo") {
-      if (localCreds.zenodoToken) await doSync("zenodo", () => fetchZenodo(localCreds.zenodoToken));
-    }
-    if (!platform || platform === "github") {
-      if (localCreds.githubUsername) await doSync("github", () => fetchGitHub(localCreds.githubUsername));
-    }
+    if (!platform || platform === "orcid")    { if (localCreds.orcidId)        await doSync("orcid",  () => fetchORCID(localCreds.orcidId).then(enrichWithCitations)); }
+    if (!platform || platform === "zenodo")   { if (localCreds.zenodoToken)    await doSync("zenodo", () => fetchZenodo(localCreds.zenodoToken)); }
+    if (!platform || platform === "github")   { if (localCreds.githubUsername) await doSync("github", () => fetchGitHub(localCreds.githubUsername)); }
     if (!platform || platform === "crossref") {
-      const existing = outputs.filter(o => o.doi && ["Paper", "Preprint", "Report"].includes(o.type));
+      const existing = outputs.filter(o => o.doi && ["Paper","Preprint","Report"].includes(o.type));
       if (existing.length > 0) {
         newIntegrations.crossref = { status: "loading", count: 0, error: null };
         setIntegrations({ ...newIntegrations });
         const enriched = await enrichWithCitations(existing);
-        setOutputs(p => [...p.map(o => enriched.find(e => e.id === o.id) || o)]);
+        setOutputs(p => p.map(o => enriched.find(e => e.id === o.id) || o));
         newIntegrations.crossref = { status: "ok", count: enriched.length, error: null };
         setIntegrations({ ...newIntegrations });
       }
@@ -979,8 +847,9 @@ export default function App() {
   return (
     <>
       <style>{CSS}</style>
-      {showLogin && <LoginModal onComplete={handleLoginComplete} />}
+      {showLogin && <LoginModal onComplete={p => { setProfile(p); setShowLogin(false); }} />}
       <div style={{ display: "flex", flexDirection: "column", width: "100vw", height: "100vh", background: "#04080f", color: "#e2e8f0", fontFamily: "'Syne',sans-serif", overflow: "hidden" }}>
+
         {/* Header */}
         <header style={{ background: "#0a0e18", borderBottom: "1px solid rgba(255,255,255,0.05)", padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", zIndex: 50, flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -993,10 +862,10 @@ export default function App() {
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <div className="desktop-nav" style={{ display: "flex", gap: 8 }}>
               {[
-                { id: "dashboard", label: "Dashboard", icon: "📊" },
-                { id: "projects", label: "Projects", icon: "📁" },
+                { id: "dashboard",    label: "Dashboard",    icon: "📊" },
+                { id: "projects",     label: "Projects",     icon: "📁" },
                 { id: "integrations", label: "Integrations", icon: "🔗" },
-                { id: "todo", label: "Todo", icon: "✓" },
+                { id: "todo",         label: "Todo",         icon: "✓"  },
               ].map(tab => (
                 <button key={tab.id} onClick={() => { setView(tab.id); setMobileMenuOpen(false); }} className="nav-item" style={{
                   padding: "6px 12px", background: view === tab.id ? `${V}22` : "transparent",
@@ -1006,7 +875,8 @@ export default function App() {
               ))}
             </div>
             <button onClick={() => setShowLogin(true)} style={{ fontSize: 14, background: "none", border: "none", color: "#64748b", cursor: "pointer", padding: "4px 8px" }} title="Edit profile">✏️</button>
-            {lastSync && <span className="last-sync" style={{ fontSize: 9, color: "#334155", fontFamily: "'JetBrains Mono',monospace" }}>Last synced: {new Date(lastSync).toLocaleTimeString()}</span>}
+            <button onClick={signOut} style={{ fontSize: 12, background: "none", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, color: "#475569", cursor: "pointer", padding: "4px 10px" }}>Sign out</button>
+            {lastSync && <span className="last-sync" style={{ fontSize: 9, color: "#334155", fontFamily: "'JetBrains Mono',monospace" }}>synced {new Date(lastSync).toLocaleTimeString()}</span>}
             <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="hamburger-btn" style={{ display: "none", background: "none", border: "none", color: "#64748b", fontSize: 20, cursor: "pointer", padding: "0 4px" }}>☰</button>
           </div>
         </header>
@@ -1015,10 +885,10 @@ export default function App() {
         {mobileMenuOpen && (
           <div style={{ background: "#0a0e18", borderBottom: "1px solid rgba(255,255,255,0.05)", display: "flex", flexDirection: "column", gap: 4, padding: "8px 12px", zIndex: 49 }} className="mobile-menu">
             {[
-              { id: "dashboard", label: "Dashboard", icon: "📊" },
-              { id: "projects", label: "Projects", icon: "📁" },
+              { id: "dashboard",    label: "Dashboard",    icon: "📊" },
+              { id: "projects",     label: "Projects",     icon: "📁" },
               { id: "integrations", label: "Integrations", icon: "🔗" },
-              { id: "todo", label: "Todo", icon: "✓" },
+              { id: "todo",         label: "Todo",         icon: "✓"  },
             ].map(tab => (
               <button key={tab.id} onClick={() => { setView(tab.id); setMobileMenuOpen(false); }} style={{
                 padding: "10px 12px", background: view === tab.id ? `${V}22` : "transparent",
@@ -1026,15 +896,16 @@ export default function App() {
                 borderRadius: 8, color: view === tab.id ? "#a78bfa" : "#a0aec0", fontSize: 13, fontWeight: 600, cursor: "pointer", transition: "all 0.15s", textAlign: "left"
               }}>{tab.icon} {tab.label}</button>
             ))}
+            <button onClick={signOut} style={{ padding: "10px 12px", background: "transparent", border: "none", borderRadius: 8, color: "#475569", fontSize: 13, fontWeight: 600, cursor: "pointer", textAlign: "left" }}>Sign out</button>
           </div>
         )}
 
         {/* Content */}
         <main style={{ padding: "20px 24px", width: "100%", flex: 1, overflow: "auto" }}>
-          {view === "dashboard" && <DashboardView profile={profile} outputs={outputs} todos={todos} integrations={integrations} />}
-          {view === "projects" && <ProjectsView outputs={outputs} setOutputs={setOutputs} integrations={integrations} onSync={sync} />}
+          {view === "dashboard"    && <DashboardView    profile={profile} outputs={outputs} todos={todos} integrations={integrations} />}
+          {view === "projects"     && <ProjectsView     outputs={outputs} setOutputs={setOutputs} integrations={integrations} onSync={sync} />}
           {view === "integrations" && <IntegrationsView integrations={integrations} creds={creds} setCreds={setCreds} onSync={sync} />}
-          {view === "todo" && <TodoView todos={todos} setTodos={setTodos} />}
+          {view === "todo"         && <TodoView         todos={todos} setTodos={setTodos} />}
         </main>
       </div>
     </>
