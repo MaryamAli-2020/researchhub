@@ -1,0 +1,54 @@
+name: Reeza Widget Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "reeza-widget-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: reeza-widget
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: reeza-widget/package-lock.json
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Generate app icons
+        run: npm run assets:icon
+
+      - name: Build Windows packages
+        run: npm run dist:win
+
+      - name: Upload packaged files
+        uses: actions/upload-artifact@v4
+        with:
+          name: reeza-widget-windows
+          path: |
+            reeza-widget/release/*.exe
+            reeza-widget/release/*.blockmap
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            reeza-widget/release/*.exe
+            reeza-widget/release/*.blockmap
+          generate_release_notes: true

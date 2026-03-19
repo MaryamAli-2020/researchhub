@@ -1,0 +1,76 @@
+{
+  "name": "reeza-widget",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"vite --host 127.0.0.1 --port 5174\" \"wait-on tcp:5174 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5174 electron .\"",
+    "assets:icon": "powershell -ExecutionPolicy Bypass -File .\\scripts\\generate-icons.ps1",
+    "build": "vite build",
+    "start": "electron .",
+    "pack": "npm run assets:icon && npm run build && npx electron-builder --dir",
+    "dist": "npm run assets:icon && npm run build && npx electron-builder",
+    "dist:win": "npm run assets:icon && npm run build && npx electron-builder --win nsis portable"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.98.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.1.1",
+    "concurrently": "^9.2.1",
+    "cross-env": "^7.0.3",
+    "electron": "^36.3.2",
+    "electron-builder": "^25.1.8",
+    "vite": "^8.0.0-beta.13",
+    "wait-on": "^8.0.3"
+  },
+  "build": {
+    "appId": "com.reeza.widget",
+    "productName": "Reeza Buddy",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "electron/main.js"
+    },
+    "asar": true,
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "artifactName": "Reeza-Buddy-Setup-${version}.${ext}",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico"
+    },
+    "portable": {
+      "artifactName": "Reeza-Buddy-Portable-${version}.${ext}"
+    }
+  }
+}
