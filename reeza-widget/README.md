@@ -39,8 +39,8 @@ npm run dist:win
 
 Artifacts are written to the `release` folder:
 
-- `Reeza-Buddy-Setup-<version>.exe` for the installer
-- `Reeza-Buddy-Portable-<version>.exe` for the portable app
+- `Reeza-Buddy-Setup.exe` for the installer
+- `Reeza-Buddy-Portable.exe` for the portable app
 
 If you only want to test the packaged app without generating an installer, use:
 
@@ -50,7 +50,11 @@ npm run pack
 
 GitHub release workflow:
 
-- Open the `Actions` tab and run `Reeza Widget Release` with `workflow_dispatch` for a manual build.
-- Or push a tag like `reeza-widget-v0.1.0` to build packages and publish a GitHub release automatically.
+- Publish a GitHub Release and the `Reeza Widget Release` workflow will build the Windows packages automatically.
+- The built `.exe` files are attached back onto that GitHub Release.
 
-The workflow uploads the generated Windows `.exe` files as artifacts, and tag builds attach them to the GitHub release page.
+Download page:
+
+- The `Reeza Widget Site` workflow publishes the static landing page from `reeza-widget-site`.
+- Its buttons point to the latest GitHub Release assets for the installer and portable build.
+- In repository settings, enable GitHub Pages with `GitHub Actions` as the source.

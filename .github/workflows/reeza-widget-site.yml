@@ -1,0 +1,63 @@
+name: Reeza Widget Site
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "reeza-widget-site/**"
+      - ".github/workflows/reeza-widget-site.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Build static site
+        env:
+          REPO_URL: https://github.com/${{ github.repository }}
+        run: |
+          mkdir -p site-dist
+          SETUP_URL="$REPO_URL/releases/latest/download/Reeza-Buddy-Setup.exe"
+          PORTABLE_URL="$REPO_URL/releases/latest/download/Reeza-Buddy-Portable.exe"
+          RELEASES_URL="$REPO_URL/releases/latest"
+          sed \
+            -e "s|__REPO_URL__|$REPO_URL|g" \
+            -e "s|__SETUP_URL__|$SETUP_URL|g" \
+            -e "s|__PORTABLE_URL__|$PORTABLE_URL|g" \
+            -e "s|__RELEASES_URL__|$RELEASES_URL|g" \
+            reeza-widget-site/index.html > site-dist/index.html
+          cp reeza-widget-site/styles.css site-dist/styles.css
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site-dist
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -2,6 +2,8 @@
   "name": "reeza-widget",
   "private": true,
   "version": "0.1.0",
+  "description": "Cute desktop companion widget for Reeza tasks.",
+  "author": "Maryam Ali",
   "type": "module",
   "main": "electron/main.js",
   "scripts": {
@@ -65,12 +67,12 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "artifactName": "Reeza-Buddy-Setup-${version}.${ext}",
+      "artifactName": "Reeza-Buddy-Setup.${ext}",
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico"
     },
     "portable": {
-      "artifactName": "Reeza-Buddy-Portable-${version}.${ext}"
+      "artifactName": "Reeza-Buddy-Portable.${ext}"
     }
   }
 }

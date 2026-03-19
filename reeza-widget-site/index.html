@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Reeza Buddy</title>
+    <meta
+      name="description"
+      content="A cute desktop widget that brings your Reeza tasks onto your screen."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Manrope:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Desktop Companion</p>
+          <h1>Reeza Buddy keeps your tasks softly in view.</h1>
+          <p class="lede">
+            A tiny bottom-corner desktop friend for Reeza that signs into your account,
+            pulls your open tasks, and turns them into gentle reminders.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="__SETUP_URL__">Download Installer</a>
+            <a class="button button-secondary" href="__PORTABLE_URL__">Portable Version</a>
+          </div>
+          <div class="hero-meta">
+            <a href="__RELEASES_URL__">Latest release</a>
+            <a href="__REPO_URL__">Source on GitHub</a>
+          </div>
+        </div>
+
+        <div class="hero-art" aria-hidden="true">
+          <div class="buddy-frame">
+            <div class="bubble">
+              <strong>Have some water.</strong>
+              <span>Your little desktop friend</span>
+            </div>
+            <div class="buddy-avatar">
+              <div class="buddy-mouth"></div>
+            </div>
+            <div class="buddy-dock">
+              <span></span>
+              <span></span>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main class="content-grid">
+        <section class="card">
+          <h2>What it does</h2>
+          <ul>
+            <li>Lives in the corner of your desktop without taking over your screen.</li>
+            <li>Signs into the same Reeza account and shows your open tasks.</li>
+            <li>Offers a calmer, more personal reminder experience than a full app window.</li>
+          </ul>
+        </section>
+
+        <section class="card">
+          <h2>Download options</h2>
+          <ul>
+            <li><strong>Installer:</strong> best for most people, with shortcuts and a normal install flow.</li>
+            <li><strong>Portable:</strong> launch it directly without installing.</li>
+            <li><strong>Windows:</strong> the current packaged build targets Windows x64.</li>
+          </ul>
+        </section>
+
+        <section class="card accent-card">
+          <h2>How releases work</h2>
+          <p>
+            New Windows builds are attached automatically whenever a GitHub Release is published.
+            The buttons on this page always point to the latest release files.
+          </p>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>
