@@ -1,10 +1,19 @@
-// reeza-app/api-client.js
-// Direct Supabase data layer — replaces the Express/MongoDB backend.
-// Works identically to the web version; same Supabase project = same data.
-
 import { supabase } from "./supabase.js";
+import { mergeUserData, normalizeUserData, sanitizeIntegrations } from "./sync-utils.js";
 
-// ─── helpers ────────────────────────────────────────────────
+function mapRowToUserData(row) {
+  if (!row) return null;
+
+  return normalizeUserData({
+    profile: row.profile,
+    outputs: row.outputs,
+    todos: row.todos,
+    integrations: row.integrations,
+    creds: row.creds,
+    lastSync: row.last_sync,
+    rowUpdatedAt: row.updated_at,
+  });
+}
 
 async function getUid() {
   const { data: { session } } = await supabase.auth.getSession();
@@ -12,95 +21,117 @@ async function getUid() {
   return session.user.id;
 }
 
-// ─── fetch ──────────────────────────────────────────────────
-
-export async function fetchUserData() {
-  const uid = await getUid();
+async function fetchUserRow(uid) {
   const { data, error } = await supabase
     .from("users")
     .select("*")
     .eq("user_id", uid)
-    .single();
+    .maybeSingle();
 
-  if (error && error.code === "PGRST116") return null; // no row yet, first login
   if (error) throw error;
+  return data;
+}
+
+function buildRow(uid, data) {
+  const normalized = normalizeUserData(data);
 
   return {
-    profile:      data.profile      ?? {},
-    outputs:      data.outputs      ?? [],
-    todos:        data.todos        ?? [],
-    integrations: data.integrations ?? {},
-    creds:        data.creds        ?? {},
-    lastSync:     data.last_sync    ?? null,
+    user_id: uid,
+    profile: normalized.profile,
+    outputs: normalized.outputs,
+    todos: normalized.todos,
+    integrations: sanitizeIntegrations(normalized.integrations),
+    creds: normalized.creds,
+    last_sync: normalized.lastSync,
   };
 }
 
-// ─── save (upsert entire row) ────────────────────────────────
+export async function fetchUserData() {
+  const uid = await getUid();
+  const row = await fetchUserRow(uid);
+  return mapRowToUserData(row);
+}
 
 export async function saveUserData(data) {
   const uid = await getUid();
-  const { error } = await supabase
-    .from("users")
-    .upsert({
-      user_id:      uid,
-      profile:      data.profile      ?? {},
-      outputs:      data.outputs      ?? [],
-      todos:        data.todos        ?? [],
-      integrations: data.integrations ?? {},
-      creds:        data.creds        ?? {},
-      last_sync:    data.lastSync ? new Date(data.lastSync).toISOString() : new Date().toISOString(),
-      updated_at:   new Date().toISOString(),
-    }, { onConflict: "user_id" });
+  const localData = normalizeUserData(data);
 
-  if (error) throw error;
-  return { ok: true };
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const existingRow = await fetchUserRow(uid);
+    const remoteData = mapRowToUserData(existingRow);
+    const mergedData = mergeUserData(remoteData, localData);
+    const nextUpdatedAt = new Date().toISOString();
+    const rowPayload = { ...buildRow(uid, mergedData), updated_at: nextUpdatedAt };
+
+    if (!existingRow) {
+      const { data: savedRow, error } = await supabase
+        .from("users")
+        .upsert(rowPayload, { onConflict: "user_id" })
+        .select("*")
+        .single();
+
+      if (!error) return mapRowToUserData(savedRow);
+      if (attempt < 2) continue;
+      throw error;
+    }
+
+    const { data: savedRow, error } = await supabase
+      .from("users")
+      .update(rowPayload)
+      .eq("user_id", uid)
+      .eq("updated_at", existingRow.updated_at)
+      .select("*")
+      .maybeSingle();
+
+    if (savedRow) return mapRowToUserData(savedRow);
+    if (error && attempt === 2) throw error;
+  }
+
+  throw new Error("Could not save user data after multiple retries.");
 }
-
-// ─── partial sync (outputs + todos only) ────────────────────
 
 export async function syncData(outputs, todos, lastSync) {
-  const uid = await getUid();
-  const { error } = await supabase
-    .from("users")
-    .update({
-      outputs,
-      todos,
-      last_sync:  lastSync ? new Date(lastSync).toISOString() : new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
-    .eq("user_id", uid);
-
-  if (error) throw error;
-  return { ok: true };
+  return saveUserData({ outputs, todos, lastSync });
 }
-
-// ─── update creds ────────────────────────────────────────────
 
 export async function updateCreds(creds) {
-  const uid = await getUid();
-  const { error } = await supabase
-    .from("users")
-    .update({ creds, updated_at: new Date().toISOString() })
-    .eq("user_id", uid);
-
-  if (error) throw error;
-  return { ok: true };
+  const current = (await fetchUserData()) || {};
+  return saveUserData({ ...current, creds });
 }
-
-// ─── update integrations ─────────────────────────────────────
 
 export async function updateIntegrations(integrations) {
-  const uid = await getUid();
-  const { error } = await supabase
-    .from("users")
-    .update({ integrations, updated_at: new Date().toISOString() })
-    .eq("user_id", uid);
-
-  if (error) throw error;
-  return { ok: true };
+  const current = (await fetchUserData()) || {};
+  return saveUserData({ ...current, integrations });
 }
 
-// ─── legacy shim — kept so App.js doesn't break on import ───
+export async function subscribeToUserData(onChange) {
+  const uid = await getUid();
+  const channel = supabase
+    .channel(`users-sync-${uid}`)
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "users",
+        filter: `user_id=eq.${uid}`,
+      },
+      (payload) => {
+        if (payload.eventType === "DELETE") {
+          onChange(null);
+          return;
+        }
+
+        onChange(mapRowToUserData(payload.new));
+      },
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+
 export async function getDeviceId() {
-  return "supabase-auth"; // no longer used
+  return "supabase-auth";
 }

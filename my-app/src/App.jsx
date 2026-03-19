@@ -1,11 +1,12 @@
-import { useState, useEffect, useCallback } from "react";
-import { fetchUserData, saveUserData } from "./api-client.js";
+﻿import { useState, useEffect, useCallback, useRef } from "react";
+import { fetchUserData, saveUserData, subscribeToUserData } from "./api-client.js";
 import { useAuth } from "./AuthContext.jsx";
 import AuthScreen from "./AuthScreen.jsx";
+import { getVisibleItems, markItemDeleted, markItemUpdated, mergeUserData, normalizeUserData, nowIso, sanitizeIntegrations, stampSection } from "./sync-utils.js";
 
-/* ─── STYLES ─────────────────────────────────────────────── */
+/* â”€â”€â”€ STYLES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 const CSS = `
-  @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700;800&family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { width: 100%; height: 100%; }
   #root { width: 100%; height: 100%; display: flex; }
@@ -44,7 +45,6 @@ const CSS = `
   @media (max-width: 768px) {
     header { padding: 12px 16px; gap: 8px; }
     header > div:first-child { gap: 8px; display: flex; }
-    header > div:first-child > div { display: none; }
     header > div:last-child { width: 100%; gap: 4px; justify-content: space-between; align-items: center; display: flex; flex-wrap: wrap; }
     .desktop-nav { flex: 1; gap: 4px; overflow-x: auto; display: flex; }
     .desktop-nav button { padding: 4px 8px; font-size: 10px; white-space: nowrap; }
@@ -56,7 +56,6 @@ const CSS = `
   @media (max-width: 480px) {
     header { padding: 10px 12px; display: flex; align-items: center; }
     header > div:first-child { gap: 8px; display: flex; align-items: center; }
-    header > div:first-child div:first-child { width: 30px; height: 30px; font-size: 14px; }
     header > div:last-child { flex: 1; gap: 4px; justify-content: space-between; align-items: center; display: flex; }
     header > div:last-child > span { display: none !important; }
     header > div:last-child > button:not(.hamburger-btn) { font-size: 12px; padding: 2px 6px; }
@@ -77,7 +76,6 @@ const CSS = `
   
   @media (max-width: 360px) {
     header { padding: 8px 10px; }
-    header > div:first-child div:first-child { width: 28px; height: 28px; }
     main { padding: 6px 8px; }
     section > div:nth-child(2) { grid-template-columns: repeat(1, 1fr) !important; }
     section > div:nth-child(2) > div { padding: 8px 6px !important; font-size: 10px !important; }
@@ -85,18 +83,25 @@ const CSS = `
   }
 `;
 
-/* ─── CONSTANTS ──────────────────────────────────────────── */
+/* â”€â”€â”€ CONSTANTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 const V = "#8b5cf6";
 const G = "#22d3a5";
 const A = "#f59e0b";
 const B = "#38bdf8";
 const P = "#f472b6";
+const HEADER_FONT = "'Poppins','Syne',sans-serif";
 
-const typeIcon = { Paper:"📄", Preprint:"📝", Dataset:"📊", Code:"💻", Software:"⚙️", Talk:"🎤", Poster:"🖼️", Report:"📋" };
+const typeIcon = { Paper:"paper", Preprint:"preprint", Dataset:"dataset", Code:"code", Software:"software", Talk:"talk", Poster:"poster", Report:"report" };
 const typeColor = t => ({ Paper:V, Preprint:"#a78bfa", Dataset:G, Code:A, Software:"#fb923c", Talk:P, Poster:"#e879f9", Report:B }[t] || "#94a3b8");
 const prioColor = p => ({ High:"#f87171", Medium:A, Low:"#475569" }[p] || "#475569");
+const NAV_ITEMS = [
+  { id: "dashboard", label: "Dashboard", icon: "dashboard" },
+  { id: "projects", label: "Projects", icon: "folder" },
+  { id: "integrations", label: "Integrations", icon: "nodes" },
+  { id: "todo", label: "Tasks", icon: "checklist" },
+];
 
-/* ─── API LAYER ──────────────────────────────────────────── */
+/* â”€â”€â”€ API LAYER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 async function fetchORCID(orcidId) {
   const base = `https://pub.orcid.org/v3.0/${orcidId}`;
   const headers = { Accept: "application/json" };
@@ -185,7 +190,7 @@ async function fetchZenodo(tokenOrUsername, isUsername = false) {
 
 async function fetchGitHub(username) {
   const res = await fetch(`https://api.github.com/users/${username}/repos?sort=updated&per_page=100&type=owner`);
-  if (!res.ok) throw new Error(`GitHub error: ${res.status} — check username`);
+  if (!res.ok) throw new Error(`GitHub error: ${res.status} - check username`);
   const repos = await res.json();
   return repos.filter(r => !r.fork).map(r => ({
     id: `gh-${r.id}`, type: "Code", title: r.name,
@@ -196,9 +201,146 @@ async function fetchGitHub(username) {
   }));
 }
 
-/* ─── SMALL UI PRIMITIVES ────────────────────────────────── */
+/* â”€â”€â”€ SMALL UI PRIMITIVES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+function Icon({ name, size = 18, color = "currentColor", stroke = 1.9 }) {
+  const props = {
+    width: size,
+    height: size,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: color,
+    strokeWidth: stroke,
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    style: { display: "block", flexShrink: 0 },
+  };
+
+  switch (name) {
+    case "logo":
+      return <svg {...props}><path d="M5 12.5 12 4l7 8.5"/><path d="M8 12.5V19h8v-6.5"/><path d="M10.5 19v-3.5h3V19"/></svg>;
+    case "dashboard":
+      return <svg {...props}><rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="5" rx="2"/><rect x="13" y="11" width="7" height="9" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/></svg>;
+    case "folder":
+      return <svg {...props}><path d="M4 8.5A2.5 2.5 0 0 1 6.5 6H10l2 2h5.5A2.5 2.5 0 0 1 20 10.5v6A2.5 2.5 0 0 1 17.5 19h-11A2.5 2.5 0 0 1 4 16.5z"/></svg>;
+    case "nodes":
+      return <svg {...props}><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="6.5" r="2.5"/><circle cx="12" cy="17.5" r="2.5"/><path d="M8.8 7.6 15.2 7.4"/><path d="M8 8.7 10.5 14.9"/><path d="M16 8.7 13.5 14.9"/></svg>;
+    case "checklist":
+      return <svg {...props}><path d="m8.5 7 1.7 1.8L13.5 5.5"/><path d="m8.5 13 1.7 1.8 3.3-3.3"/><path d="M15.5 7H19"/><path d="M15.5 13H19"/><path d="M5 5h1v4H5z"/><path d="M5 11h1v4H5z"/></svg>;
+    case "paper":
+      return <svg {...props}><path d="M8 3.5h6l4 4v13H8a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2Z"/><path d="M14 3.5v4h4"/><path d="M10 12h6"/><path d="M10 16h6"/></svg>;
+    case "preprint":
+      return <svg {...props}><path d="M7 4.5h8a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2Z"/><path d="M8.5 9h7"/><path d="M8.5 12h7"/><path d="M8.5 15h4.5"/></svg>;
+    case "dataset":
+      return <svg {...props}><ellipse cx="12" cy="6.5" rx="6.5" ry="3.5"/><path d="M5.5 6.5v5c0 1.9 2.9 3.5 6.5 3.5s6.5-1.6 6.5-3.5v-5"/><path d="M5.5 11.5v5c0 1.9 2.9 3.5 6.5 3.5s6.5-1.6 6.5-3.5v-5"/></svg>;
+    case "code":
+      return <svg {...props}><path d="m9 8-4 4 4 4"/><path d="m15 8 4 4-4 4"/><path d="m13 5-2 14"/></svg>;
+    case "software":
+      return <svg {...props}><circle cx="12" cy="12" r="3.2"/><path d="M12 3.8v2.4"/><path d="M12 17.8v2.4"/><path d="m18.2 5.8-1.7 1.7"/><path d="m7.5 16.5-1.7 1.7"/><path d="M20.2 12h-2.4"/><path d="M6.2 12H3.8"/><path d="m18.2 18.2-1.7-1.7"/><path d="m7.5 7.5-1.7-1.7"/></svg>;
+    case "talk":
+      return <svg {...props}><path d="M5 9.5a7 7 0 0 1 14 0"/><path d="M8 19h8"/><path d="M10 15.5h4"/><path d="M12 8v7.5"/></svg>;
+    case "poster":
+      return <svg {...props}><rect x="5" y="4" width="14" height="11" rx="2"/><path d="m8 12 2.2-2.2a1 1 0 0 1 1.4 0l1.5 1.5 2.7-2.7a1 1 0 0 1 1.4 0L19 10.4"/><path d="M9 18h6"/><path d="M12 15v3"/></svg>;
+    case "report":
+      return <svg {...props}><path d="M7.5 4.5h9a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-9a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2Z"/><path d="M9 9.5h6"/><path d="M9 13h6"/><path d="M9 16.5h4"/></svg>;
+    case "citations":
+      return <svg {...props}><path d="M7 7.5h3v3H7z"/><path d="M14 13.5h3v3h-3z"/><path d="M10 9h4"/><path d="M14 9a4 4 0 0 1 4 4v.5"/><path d="M6 15a4 4 0 0 0 4 4h4"/></svg>;
+    case "link":
+      return <svg {...props}><path d="M10 13.5 14 9.5"/><path d="M8.5 16.5H7a4 4 0 0 1 0-8h3"/><path d="M13.5 7.5H17a4 4 0 0 1 0 8h-3"/></svg>;
+    case "refresh":
+      return <svg {...props}><path d="M20 6v5h-5"/><path d="M4 18v-5h5"/><path d="M19 11a7 7 0 0 0-12-4L5 9"/><path d="M5 13a7 7 0 0 0 12 4l2-2"/></svg>;
+    case "edit":
+      return <svg {...props}><path d="m4 20 4.2-1 8.8-8.8a2.2 2.2 0 0 0-3.1-3.1L5 15.9 4 20Z"/><path d="m12.5 6.5 5 5"/></svg>;
+    case "logout":
+      return <svg {...props}><path d="M9 4.5H6.5A2.5 2.5 0 0 0 4 7v10a2.5 2.5 0 0 0 2.5 2.5H9"/><path d="M14 8.5 19 12l-5 3.5"/><path d="M18.5 12H9"/></svg>;
+    case "menu":
+      return <svg {...props}><path d="M4.5 7.5h15"/><path d="M4.5 12h15"/><path d="M4.5 16.5h15"/></svg>;
+    case "close":
+      return <svg {...props}><path d="m7 7 10 10"/><path d="m17 7-10 10"/></svg>;
+    case "check":
+      return <svg {...props}><path d="m5.5 12.5 4 4L18.5 7.5"/></svg>;
+    case "alert":
+      return <svg {...props}><path d="M12 8v5"/><path d="M12 16.5h.01"/><path d="M10.2 4.8 4.9 14a2 2 0 0 0 1.7 3h10.8a2 2 0 0 0 1.7-3l-5.3-9.2a2 2 0 0 0-3.4 0Z"/></svg>;
+    case "science":
+      return <svg {...props}><path d="M9 4.5h6"/><path d="M10 4.5v4l-4.8 7.6a2.2 2.2 0 0 0 1.9 3.4h9.8a2.2 2.2 0 0 0 1.9-3.4L14 8.5v-4"/><path d="M9 12h6"/></svg>;
+    case "archive":
+      return <svg {...props}><path d="M4.5 7.5h15"/><path d="M6 7.5v10a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-10"/><path d="M10 12h4"/></svg>;
+    case "github":
+      return <svg {...props}><path d="M9 18.5c-4 .8-4-2-5.5-2.5"/><path d="M15 18.5v-3.1a3.2 3.2 0 0 0-.9-2.5c3 0 6-1.5 6-6a4.7 4.7 0 0 0-1.3-3.2 4.3 4.3 0 0 0-.1-3.2S17.5 0 15 1.8a11.5 11.5 0 0 0-6 0C6.5 0 5.3.5 5.3.5a4.3 4.3 0 0 0-.1 3.2A4.7 4.7 0 0 0 4 6.9c0 4.5 3 6 6 6a3.2 3.2 0 0 0-.9 2.5v3.1"/><path d="M9 18.5h6"/></svg>;
+    case "download":
+      return <svg {...props}><path d="M12 4.5v10" /><path d="m8 11.5 4 4 4-4" /><path d="M5 19.5h14" /></svg>;
+    case "star":
+      return <svg {...props}><path d="m12 4.5 2.2 4.4 4.8.7-3.5 3.4.8 4.8-4.3-2.3-4.3 2.3.8-4.8-3.5-3.4 4.8-.7z" /></svg>;
+    case "chevron-right":
+      return <svg {...props}><path d="m9 6 6 6-6 6" /></svg>;
+    case "spark":
+      return <svg {...props}><path d="m12 3.5 1.8 4.7 4.7 1.8-4.7 1.8L12 16.5l-1.8-4.7-4.7-1.8 4.7-1.8z"/><path d="M18.5 16.5 19.5 19l2.5 1-2.5 1-1 2.5-1-2.5-2.5-1 2.5-1z"/></svg>;
+    default:
+      return <svg {...props}><circle cx="12" cy="12" r="7"/></svg>;
+  }
+}
+
 function Spinner({ size = 16, color = V }) {
-  return <div className="spin" style={{ width: size, height: size, border: `2px solid ${color}30`, borderTopColor: color, borderRadius: "50%", flexShrink: 0 }} />;
+  return (
+    <div style={{ width: size, height: size, position: "relative", flexShrink: 0 }}>
+      <div className="spin" style={{ position: "absolute", inset: 0, border: `2px solid ${color}20`, borderTopColor: color, borderRadius: "50%" }} />
+      <div style={{ position: "absolute", inset: size * 0.28, borderRadius: "50%", background: color, boxShadow: `0 0 ${size * 0.5}px ${color}66` }} />
+    </div>
+  );
+}
+
+function BrandMark({ size = 40 }) {
+  return (
+    <div style={{
+      width: size,
+      height: size,
+      borderRadius: size * 0.32,
+      background: `radial-gradient(circle at 30% 30%, #ffffff 0%, ${V} 38%, ${B} 100%)`,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      boxShadow: `0 18px 40px ${V}55, inset 0 1px 0 rgba(255,255,255,0.35)`,
+      flexShrink: 0,
+    }}>
+      <Icon name="logo" size={size * 0.5} color="#fff" stroke={2.1} />
+    </div>
+  );
+}
+
+function LoadingScreen() {
+  return (
+    <div style={{
+      minHeight: "100vh",
+      background: "radial-gradient(circle at top, rgba(139,92,246,0.22), transparent 38%), linear-gradient(180deg, #04080f 0%, #07111f 100%)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      position: "relative",
+      overflow: "hidden",
+    }}>
+      <div style={{ position: "absolute", inset: 0, background: "radial-gradient(circle at 20% 20%, rgba(56,189,248,0.16), transparent 24%), radial-gradient(circle at 80% 10%, rgba(34,211,165,0.12), transparent 18%)" }} />
+      <div style={{
+        position: "relative",
+        padding: "30px 34px",
+        borderRadius: 28,
+        border: "1px solid rgba(255,255,255,0.08)",
+        background: "rgba(6,10,18,0.72)",
+        boxShadow: "0 22px 60px rgba(0,0,0,0.45)",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 14,
+      }}>
+        <div className="pulse"><BrandMark size={58} /></div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, color: "#dbeafe" }}>
+          <Spinner size={20} color={B} />
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700 }}>Loading your workspace</div>
+            <div style={{ fontSize: 11, color: "#7c8aa5", marginTop: 2 }}>Syncing profile, tasks, and research signals</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function Chip({ color, children, small }) {
@@ -237,8 +379,10 @@ function Modal({ title, onClose, children, width = 520 }) {
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div style={{ background: "#0d1220", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 20, padding: "28px 30px", width: "100%", maxWidth: width, maxHeight: "88vh", overflowY: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 22 }}>
-          <div style={{ fontSize: 16, fontWeight: 700, color: "#f1f5f9", fontFamily: "'Syne',sans-serif" }}>{title}</div>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "#475569", fontSize: 22, cursor: "pointer", lineHeight: 1 }}>×</button>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "#f1f5f9", fontFamily: HEADER_FONT }}>{title}</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 2 }}>
+            <Icon name="close" size={18} color="#64748b" />
+          </button>
         </div>
         {children}
       </div>
@@ -258,8 +402,9 @@ function Field({ label, children }) {
 const INP = { width: "100%", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: "9px 13px", color: "#e2e8f0", fontSize: 13, outline: "none", transition: "background 0.2s" };
 const SEL = { ...INP, cursor: "pointer" };
 
-/* ─── STORAGE HELPERS ────────────────────────────────────── */
+/* â”€â”€â”€ STORAGE HELPERS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 const STORAGE_KEY = "Reeza_user_data";
+const SYNC_DEBOUNCE_MS = 450;
 function saveToStorage(data) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...data, lastSaved: new Date().toISOString() })); }
   catch (e) { console.error("Storage error:", e); }
@@ -269,50 +414,123 @@ function loadFromStorage() {
   catch (e) { console.error("Storage error:", e); return null; }
 }
 
-/* ─── METRIC CARD ────────────────────────────────────────── */
+/* â”€â”€â”€ METRIC CARD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 function MetricCard({ icon, value, label, sub, color, delay = 0 }) {
   return (
     <div className="card fade-up" style={{
       animationDelay: `${delay}ms`,
-      background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.07)",
-      borderRadius: 16, padding: "18px 18px", flex: 1, minWidth: 110,
-      transition: "border-color 0.2s, transform 0.2s", cursor: "default"
+      background: `linear-gradient(180deg, ${color}14 0%, rgba(8,12,20,0.88) 72%)`,
+      border: `1px solid ${color}30`,
+      borderRadius: 22,
+      padding: "18px 18px",
+      flex: 1,
+      minWidth: 140,
+      boxShadow: `inset 0 1px 0 rgba(255,255,255,0.05), 0 18px 34px ${color}12`,
+      transition: "border-color 0.2s, transform 0.2s, box-shadow 0.2s",
+      cursor: "default"
     }}>
-      <div style={{ fontSize: 20, marginBottom: 8 }}>{icon}</div>
+      <div style={{
+        width: 42,
+        height: 42,
+        borderRadius: 14,
+        background: `${color}18`,
+        border: `1px solid ${color}38`,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        marginBottom: 14,
+      }}>
+        <Icon name={icon} size={18} color={color} />
+      </div>
       <div style={{ fontSize: 28, fontWeight: 800, color, fontFamily: "'JetBrains Mono',monospace", letterSpacing: "-1.5px", lineHeight: 1 }}>{typeof value === "number" ? value.toLocaleString() : value}</div>
-      <div style={{ fontSize: 13, fontWeight: 600, color: "#cbd5e1", marginTop: 5 }}>{label}</div>
-      {sub && <div style={{ fontSize: 11, color: "#475569", marginTop: 3 }}>{sub}</div>}
+      <div style={{ fontSize: 13, fontWeight: 700, color: "#e2e8f0", marginTop: 8 }}>{label}</div>
+      {sub && <div style={{ fontSize: 11, color: "#7c8aa5", marginTop: 5, lineHeight: 1.4 }}>{sub}</div>}
     </div>
   );
 }
 
-/* ─── DASHBOARD VIEW ─────────────────────────────────────── */
+/* â”€â”€â”€ DASHBOARD VIEW â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 function DashboardView({ profile, outputs, todos, integrations }) {
-  const pubs = outputs.filter(o => ["Paper","Preprint","Report"].includes(o.type)).length;
-  const datasets = outputs.filter(o => o.type === "Dataset").length;
-  const repos = outputs.filter(o => ["Code","Software"].includes(o.type)).length;
-  const talks = outputs.filter(o => ["Talk","Poster"].includes(o.type)).length;
-  const citations = outputs.reduce((s, o) => s + (o.citations || 0), 0);
-  const downloads = outputs.reduce((s, o) => s + (o.downloads || 0), 0);
-  const stars = outputs.reduce((s, o) => s + (o.stars || 0), 0);
-  const dois = outputs.filter(o => o.doi).length;
-  const pending = todos.filter(t => !t.done);
+  const visibleOutputs = getVisibleItems(outputs);
+  const visibleTodos = getVisibleItems(todos);
+  const pubs = visibleOutputs.filter(o => ["Paper","Preprint","Report"].includes(o.type)).length;
+  const datasets = visibleOutputs.filter(o => o.type === "Dataset").length;
+  const repos = visibleOutputs.filter(o => ["Code","Software"].includes(o.type)).length;
+  const talks = visibleOutputs.filter(o => ["Talk","Poster"].includes(o.type)).length;
+  const citations = visibleOutputs.reduce((s, o) => s + (o.citations || 0), 0);
+  const downloads = visibleOutputs.reduce((s, o) => s + (o.downloads || 0), 0);
+  const stars = visibleOutputs.reduce((s, o) => s + (o.stars || 0), 0);
+  const dois = visibleOutputs.filter(o => o.doi).length;
+  const pending = visibleTodos.filter(t => !t.done);
   const highPrio = pending.filter(t => t.priority === "High");
   const byType = ["Paper","Preprint","Dataset","Code","Software","Talk","Poster","Report"]
-    .map(t => ({ t, n: outputs.filter(o => o.type === t).length })).filter(x => x.n > 0);
+    .map(t => ({ t, n: visibleOutputs.filter(o => o.type === t).length })).filter(x => x.n > 0);
   const maxN = Math.max(...byType.map(x => x.n), 1);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 26 }}>
-      <section>
-        <SectionLabel>Research Footprint · {outputs.length} total outputs</SectionLabel>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(115px,1fr))", gap: 10 }}>
-          <MetricCard icon="📄" value={pubs}      label="Publications" sub="papers & preprints"                        color={V} delay={0}   />
-          <MetricCard icon="📊" value={datasets}  label="Datasets"     sub={`${downloads.toLocaleString()} downloads`} color={G} delay={50}  />
-          <MetricCard icon="💻" value={repos}     label="Code"         sub={`${stars} ⭐`}                             color={A} delay={100} />
-          <MetricCard icon="🎤" value={talks}     label="Talks"        sub="& posters"                                 color={P} delay={150} />
-          <MetricCard icon="📎" value={citations} label="Citations"    sub="combined"                                  color={B} delay={200} />
-          <MetricCard icon="🔗" value={dois}      label="DOIs"         sub="tracked"                                   color="#fb923c" delay={250} />
+      <section style={{
+        background: "linear-gradient(135deg, rgba(139,92,246,0.18) 0%, rgba(56,189,248,0.1) 45%, rgba(4,8,15,0.92) 100%)",
+        border: "1px solid rgba(255,255,255,0.08)",
+        borderRadius: 28,
+        padding: "24px 24px 22px",
+        boxShadow: "0 28px 60px rgba(2,6,23,0.45)",
+        overflow: "hidden",
+        position: "relative",
+      }}>
+        <div style={{ position: "absolute", inset: 0, background: "radial-gradient(circle at top right, rgba(34,211,165,0.16), transparent 28%), radial-gradient(circle at left center, rgba(139,92,246,0.18), transparent 34%)" }} />
+        <div style={{ position: "relative", display: "grid", gridTemplateColumns: "1.7fr 1fr", gap: 18, alignItems: "stretch" }}>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+              <BrandMark size={46} />
+              <div>
+                <div style={{ fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "#8ba3c7", fontFamily: "'JetBrains Mono',monospace" }}>Research Dashboard</div>
+                <div style={{ fontSize: 26, fontWeight: 800, color: "#f8fbff", marginTop: 2, fontFamily: HEADER_FONT, letterSpacing: "-0.03em" }}>{profile?.name || "Your"} signal overview</div>
+              </div>
+            </div>
+            <div style={{ fontSize: 14, lineHeight: 1.7, color: "#bfd0ea", maxWidth: 640 }}>
+              Track publications, datasets, code, and pending work in one place with a cleaner sync-aware workspace.
+            </div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 18 }}>
+              <Chip color={V}>Outputs {visibleOutputs.length}</Chip>
+              <Chip color={B}>Citations {citations}</Chip>
+              <Chip color={G}>Datasets {datasets}</Chip>
+              <Chip color={A}>Open Tasks {pending.length}</Chip>
+            </div>
+          </div>
+          <div style={{
+            background: "rgba(8,12,20,0.64)",
+            border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: 22,
+            padding: "16px 18px",
+            backdropFilter: "blur(10px)",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+              <SectionLabel small noMargin>Live Snapshot</SectionLabel>
+              <Chip color={highPrio.length > 0 ? "#f87171" : G} small>{highPrio.length > 0 ? `${highPrio.length} urgent` : "In flow"}</Chip>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              {[
+                { label: "Portfolio", value: visibleOutputs.filter(o => o.inPortfolio).length, color: V },
+                { label: "Connected", value: Object.values(integrations).filter(s => s?.status === "ok").length, color: G },
+                { label: "Talks", value: talks, color: P },
+                { label: "Code Stars", value: stars, color: A },
+              ].map((item) => (
+                <div key={item.label} style={{ padding: "12px 13px", borderRadius: 16, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)" }}>
+                  <div style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "#70819e", fontFamily: "'JetBrains Mono',monospace" }}>{item.label}</div>
+                  <div style={{ marginTop: 8, fontSize: 21, fontWeight: 800, color: item.color, fontFamily: "'JetBrains Mono',monospace" }}>{item.value}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(150px,1fr))", gap: 12, marginTop: 18, position: "relative" }}>
+          <MetricCard icon="paper" value={pubs}      label="Publications" sub="papers & preprints"                        color={V} delay={0}   />
+          <MetricCard icon="dataset" value={datasets}  label="Datasets"     sub={`${downloads.toLocaleString()} downloads`} color={G} delay={50}  />
+          <MetricCard icon="code" value={repos}     label="Code"         sub={`${stars.toLocaleString()} tracked stars`}                             color={A} delay={100} />
+          <MetricCard icon="talk" value={talks}     label="Talks"        sub="talks & posters"                                 color={P} delay={150} />
+          <MetricCard icon="citations" value={citations} label="Citations"    sub="combined across outputs"                                  color={B} delay={200} />
+          <MetricCard icon="link" value={dois}      label="DOIs"         sub="linked records"                                   color="#fb923c" delay={250} />
         </div>
       </section>
 
@@ -320,10 +538,13 @@ function DashboardView({ profile, outputs, todos, integrations }) {
         <div className="card fade-up" style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 16, padding: "18px 20px", animationDelay: "80ms" }}>
           <SectionLabel small>Output Types</SectionLabel>
           {byType.length === 0
-            ? <Empty>No outputs yet — connect a source or add manually.</Empty>
+            ? <Empty>No outputs yet â€” connect a source or add manually.</Empty>
             : byType.map((x, i) => (
               <div key={x.t} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 9 }}>
-                <div style={{ width: 80, fontSize: 11, color: "#64748b", fontFamily: "'JetBrains Mono',monospace", flexShrink: 0 }}>{typeIcon[x.t]} {x.t}</div>
+                <div style={{ width: 94, fontSize: 11, color: "#64748b", fontFamily: "'JetBrains Mono',monospace", flexShrink: 0, display: "flex", alignItems: "center", gap: 6 }}>
+                  <Icon name={typeIcon[x.t]} size={14} color={typeColor(x.t)} />
+                  {x.t}
+                </div>
                 <div style={{ flex: 1, height: 5, background: "rgba(255,255,255,0.06)", borderRadius: 99, overflow: "hidden" }}>
                   <div style={{ width: `${(x.n / maxN) * 100}%`, height: "100%", background: typeColor(x.t), borderRadius: 99, transition: "width 0.9s cubic-bezier(.22,1,.36,1)", transitionDelay: `${i * 60}ms` }} />
                 </div>
@@ -339,7 +560,7 @@ function DashboardView({ profile, outputs, todos, integrations }) {
             {highPrio.length > 0 && <Chip color="#f87171" small>{highPrio.length} urgent</Chip>}
           </div>
           {pending.length === 0
-            ? <Empty>Nothing pending. 🎉</Empty>
+            ? <Empty><span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><Icon name="spark" size={14} color={G} />Nothing pending.</span></Empty>
             : pending.slice(0, 6).map(t => (
               <div key={t.id} style={{ display: "flex", gap: 8, marginBottom: 9, alignItems: "flex-start" }}>
                 <div style={{ width: 6, height: 6, borderRadius: "50%", background: prioColor(t.priority), marginTop: 4, flexShrink: 0 }} />
@@ -385,37 +606,57 @@ function DashboardView({ profile, outputs, todos, integrations }) {
   );
 }
 
-/* ─── PROJECTS VIEW ──────────────────────────────────────── */
+/* â”€â”€â”€ PROJECTS VIEW â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 function ProjectsView({ outputs, setOutputs, integrations, onSync }) {
   const [showAdd, setShowAdd] = useState(false);
   const [expanded, setExpanded] = useState(null);
   const [form, setForm] = useState({ type: "Paper", title: "", platform: "Zenodo", year: new Date().getFullYear(), citations: 0, downloads: 0, stars: 0, doi: "", version: "" });
+  const visibleOutputs = getVisibleItems(outputs);
 
   function add() {
     if (!form.title.trim()) return;
-    setOutputs(p => [...p, { ...form, id: `manual-${Math.random().toString(36).slice(2)}`, citations: +form.citations, downloads: +form.downloads, stars: +form.stars, source: "manual" }]);
+    setOutputs((current) => [
+      ...current,
+      markItemUpdated(
+        {
+          id: `manual-${Math.random().toString(36).slice(2)}`,
+          source: "manual",
+          createdAt: nowIso(),
+        },
+        {
+          ...form,
+          citations: +form.citations,
+          downloads: +form.downloads,
+          stars: +form.stars,
+        },
+      ),
+    ]);
     setShowAdd(false);
     setForm({ type: "Paper", title: "", platform: "Zenodo", year: new Date().getFullYear(), citations: 0, downloads: 0, stars: 0, doi: "", version: "" });
   }
 
-  function remove(id) { setOutputs(p => p.filter(o => o.id !== id)); }
+  function remove(id) {
+    setOutputs((current) => current.map((output) => (
+      output.id === id ? markItemDeleted(output) : output
+    )));
+  }
 
   const grouped = {};
-  outputs.forEach(o => { const k = o.year || "Unknown"; if (!grouped[k]) grouped[k] = []; grouped[k].push(o); });
+  visibleOutputs.forEach(o => { const k = o.year || "Unknown"; if (!grouped[k]) grouped[k] = []; grouped[k].push(o); });
   const years = Object.keys(grouped).sort((a, b) => b - a);
   const isAnySyncing = Object.values(integrations).some(i => i.status === "loading");
 
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-        <SectionLabel noMargin>{outputs.length} Research Outputs</SectionLabel>
+        <SectionLabel noMargin>{visibleOutputs.length} Research Outputs</SectionLabel>
         <div style={{ display: "flex", gap: 8 }}>
           <button className="btn" onClick={onSync} disabled={isAnySyncing} style={{
             display: "flex", alignItems: "center", gap: 6, padding: "8px 14px",
             background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)",
             borderRadius: 10, color: isAnySyncing ? "#334155" : "#94a3b8", fontSize: 12, fontWeight: 600, cursor: isAnySyncing ? "not-allowed" : "pointer", transition: "all 0.15s"
           }}>
-            {isAnySyncing ? <Spinner size={12} /> : "↻"} Sync All
+            {isAnySyncing ? <Spinner size={12} /> : <Icon name="refresh" size={14} color="#94a3b8" />} Sync All
           </button>
           <button className="btn" onClick={() => setShowAdd(true)} style={{
             padding: "8px 16px", background: `${V}20`, border: `1px solid ${V}44`,
@@ -424,7 +665,7 @@ function ProjectsView({ outputs, setOutputs, integrations, onSync }) {
         </div>
       </div>
 
-      {outputs.length === 0 && !isAnySyncing && <Empty center>No outputs yet. Connect a source in Integrations or add manually.</Empty>}
+      {visibleOutputs.length === 0 && !isAnySyncing && <Empty center>No outputs yet. Connect a source in Integrations or add manually.</Empty>}
       {isAnySyncing && [1,2,3].map(i => <SkeletonRow key={i} />)}
 
       {years.map(year => (
@@ -445,7 +686,12 @@ function ProjectsView({ outputs, setOutputs, integrations, onSync }) {
 
                   {/* Portfolio checkbox */}
                   <button
-                    onClick={e => { e.stopPropagation(); setOutputs(p => p.map(x => x.id === o.id ? { ...x, inPortfolio: !x.inPortfolio } : x)); }}
+                    onClick={e => {
+                      e.stopPropagation();
+                      setOutputs((current) => current.map((output) => (
+                        output.id === o.id ? markItemUpdated(output, { inPortfolio: !output.inPortfolio }) : output
+                      )));
+                    }}
                     title={inPortfolio ? "Remove from portfolio" : "Add to portfolio"}
                     style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: `2px solid ${inPortfolio ? V : "rgba(255,255,255,0.15)"}`, background: inPortfolio ? V : "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", transition: "all 0.18s", boxShadow: inPortfolio ? `0 0 8px ${V}66` : "none" }}
                   >
@@ -457,7 +703,9 @@ function ProjectsView({ outputs, setOutputs, integrations, onSync }) {
                   </button>
 
                   <div onClick={() => setExpanded(isExp ? null : o.id)} style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, cursor: "pointer", minWidth: 0 }}>
-                  <div style={{ width: 34, height: 34, borderRadius: 9, background: `${c}18`, border: `1px solid ${c}28`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, flexShrink: 0 }}>{typeIcon[o.type] || "📄"}</div>
+                  <div style={{ width: 34, height: 34, borderRadius: 9, background: `${c}18`, border: `1px solid ${c}28`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <Icon name={typeIcon[o.type] || "paper"} size={16} color={c} />
+                  </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap", marginBottom: 3 }}>
                       <Chip color={c} small>{o.type}</Chip>
@@ -467,10 +715,10 @@ function ProjectsView({ outputs, setOutputs, integrations, onSync }) {
                     <div style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{o.title}</div>
                   </div>
                   <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
-                    {o.citations > 0 && <span style={{ fontSize: 11, color: V, fontFamily: "'JetBrains Mono',monospace" }}>📎{o.citations}</span>}
-                    {o.downloads > 0 && <span style={{ fontSize: 11, color: G, fontFamily: "'JetBrains Mono',monospace" }}>⬇{o.downloads.toLocaleString()}</span>}
-                    {o.stars > 0 && <span style={{ fontSize: 11, color: A, fontFamily: "'JetBrains Mono',monospace" }}>⭐{o.stars}</span>}
-                    <span style={{ color: "#334155", fontSize: 16, transform: isExp ? "rotate(90deg)" : "none", transition: "transform 0.2s" }}>›</span>
+                    {o.citations > 0 && <span style={{ fontSize: 11, color: V, fontFamily: "'JetBrains Mono',monospace", display: "inline-flex", alignItems: "center", gap: 4 }}><Icon name="citations" size={12} color={V} />{o.citations}</span>}
+                    {o.downloads > 0 && <span style={{ fontSize: 11, color: G, fontFamily: "'JetBrains Mono',monospace", display: "inline-flex", alignItems: "center", gap: 4 }}><Icon name="download" size={12} color={G} />{o.downloads.toLocaleString()}</span>}
+                    {o.stars > 0 && <span style={{ fontSize: 11, color: A, fontFamily: "'JetBrains Mono',monospace", display: "inline-flex", alignItems: "center", gap: 4 }}><Icon name="star" size={12} color={A} />{o.stars}</span>}
+                    <span style={{ color: "#334155", display: "inline-flex", transform: isExp ? "rotate(90deg)" : "none", transition: "transform 0.2s" }}><Icon name="chevron-right" size={15} color="#475569" /></span>
                   </div>
                   </div>{/* end clickable row */}
                 </div>
@@ -479,9 +727,9 @@ function ProjectsView({ outputs, setOutputs, integrations, onSync }) {
                     {o.doi && <div style={{ fontSize: 11, color: "#475569", fontFamily: "'JetBrains Mono',monospace", marginBottom: 10, wordBreak: "break-all" }}>DOI: <a href={`https://doi.org/${o.doi}`} target="_blank" rel="noopener noreferrer" style={{ color: B, textDecoration: "none" }}>{o.doi}</a></div>}
                     {o.description && <div style={{ fontSize: 12, color: "#64748b", marginBottom: 10, lineHeight: 1.5 }}>{o.description}</div>}
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-                      {o.citations > 0 && <StatBadge icon="📎" label="citations" value={o.citations} color={V} />}
-                      {o.downloads > 0 && <StatBadge icon="⬇" label="downloads" value={o.downloads} color={G} />}
-                      {o.stars > 0 && <StatBadge icon="⭐" label="stars" value={o.stars} color={A} />}
+                      {o.citations > 0 && <StatBadge icon="citations" label="citations" value={o.citations} color={V} />}
+                      {o.downloads > 0 && <StatBadge icon="download" label="downloads" value={o.downloads} color={G} />}
+                      {o.stars > 0 && <StatBadge icon="star" label="stars" value={o.stars} color={A} />}
                     </div>
                     {o.source === "manual" && (
                       <button onClick={() => remove(o.id)} style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 8, color: "#f87171", fontSize: 11, padding: "4px 10px", cursor: "pointer" }}>Remove</button>
@@ -518,28 +766,35 @@ function ProjectsView({ outputs, setOutputs, integrations, onSync }) {
 function StatBadge({ icon, label, value, color }) {
   return (
     <div style={{ background: `${color}12`, border: `1px solid ${color}25`, borderRadius: 8, padding: "6px 12px" }}>
-      <div style={{ fontSize: 10, color: "#475569" }}>{icon} {label}</div>
+      <div style={{ fontSize: 10, color: "#475569", display: "flex", alignItems: "center", gap: 6 }}>
+        <Icon name={icon} size={11} color={color} />
+        {label}
+      </div>
       <div style={{ fontSize: 16, fontWeight: 700, color, fontFamily: "'JetBrains Mono',monospace" }}>{value.toLocaleString()}</div>
     </div>
   );
 }
 
-/* ─── INTEGRATIONS VIEW ──────────────────────────────────── */
+/* â”€â”€â”€ INTEGRATIONS VIEW â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 function IntegrationsView({ integrations, creds, setCreds, onSync }) {
   const [showSetup, setShowSetup] = useState(null);
   const [localCreds, setLocalCreds] = useState({ ...creds });
 
+  useEffect(() => {
+    setLocalCreds({ ...creds });
+  }, [creds]);
+
   function saveAndSync(platform) {
-    setCreds(localCreds);
+    setCreds((current) => stampSection(current, localCreds));
     setShowSetup(null);
     onSync(platform, localCreds);
   }
 
   const sources = [
-    { key: "orcid",    name: "ORCID",    icon: "🔬", color: "#a6ce39", desc: "Pulls all your publications, preprints and datasets from your public ORCID record.", apiNote: "Public API · No authentication required",               field: { label: "ORCID ID",              key: "orcidId",        placeholder: "0000-0001-2345-6789",                                          type: "text"     } },
-    { key: "zenodo",   name: "Zenodo",   icon: "🗄️", color: G,         desc: "Imports all your Zenodo deposits with download statistics.",                          apiNote: "Zenodo REST API · Requires personal access token",         field: { label: "Personal Access Token", key: "zenodoToken",    placeholder: "your token from zenodo.org/account/settings/applications",    type: "password" } },
-    { key: "github",   name: "GitHub",   icon: "🐙", color: A,         desc: "Fetches your public repos with star counts, languages and descriptions.",             apiNote: "GitHub REST API · Username only (public repos)",           field: { label: "GitHub Username",       key: "githubUsername", placeholder: "your-github-username",                                         type: "text"     } },
-    { key: "crossref", name: "CrossRef", icon: "🔗", color: B,         desc: "Auto-enriches citation counts for all outputs that have a DOI.",                     apiNote: "CrossRef API · Runs automatically when outputs have DOIs", field: null },
+    { key: "orcid",    name: "ORCID",    icon: "science", color: "#a6ce39", desc: "Pulls all your publications, preprints and datasets from your public ORCID record.", apiNote: "Public API · No authentication required",               field: { label: "ORCID ID",              key: "orcidId",        placeholder: "0000-0001-2345-6789",                                          type: "text"     } },
+    { key: "zenodo",   name: "Zenodo",   icon: "archive", color: G,         desc: "Imports all your Zenodo deposits with download statistics.",                          apiNote: "Zenodo REST API · Requires personal access token",         field: { label: "Personal Access Token", key: "zenodoToken",    placeholder: "your token from zenodo.org/account/settings/applications",    type: "password" } },
+    { key: "github",   name: "GitHub",   icon: "github",  color: A,         desc: "Fetches your public repos with star counts, languages and descriptions.",             apiNote: "GitHub REST API · Username only (public repos)",           field: { label: "GitHub Username",       key: "githubUsername", placeholder: "your-github-username",                                         type: "text"     } },
+    { key: "crossref", name: "CrossRef", icon: "link",    color: B,         desc: "Auto-enriches citation counts for all outputs that have a DOI.",                     apiNote: "CrossRef API · Runs automatically when outputs have DOIs", field: null },
   ];
 
   return (
@@ -554,7 +809,9 @@ function IntegrationsView({ integrations, creds, setCreds, onSync }) {
         return (
           <div key={s.key} className="card" style={{ background: "rgba(255,255,255,0.025)", border: `1px solid ${isOk ? s.color+"35" : "rgba(255,255,255,0.07)"}`, borderRadius: 16, padding: "18px 20px", transition: "border-color 0.2s" }}>
             <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
-              <div style={{ fontSize: 26, flexShrink: 0, marginTop: 2 }}>{s.icon}</div>
+              <div style={{ width: 48, height: 48, borderRadius: 16, flexShrink: 0, marginTop: 2, display: "flex", alignItems: "center", justifyContent: "center", background: `${s.color}16`, border: `1px solid ${s.color}30`, boxShadow: `inset 0 1px 0 rgba(255,255,255,0.04), 0 10px 24px ${s.color}12` }}>
+                <Icon name={s.icon} size={21} color={s.color} />
+              </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 10 }}>
                   <div>
@@ -563,8 +820,22 @@ function IntegrationsView({ integrations, creds, setCreds, onSync }) {
                     <div style={{ fontSize: 11, color: "#334155", fontFamily: "'JetBrains Mono',monospace" }}>{s.apiNote}</div>
                   </div>
                   <div style={{ textAlign: "right", flexShrink: 0 }}>
-                    {isOk      && <Chip color={s.color}>✓ Connected</Chip>}
-                    {isError   && <Chip color="#f87171">⚠ Error</Chip>}
+                    {isOk && (
+                      <Chip color={s.color}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          <Icon name="check" size={12} color={s.color} />
+                          Connected
+                        </span>
+                      </Chip>
+                    )}
+                    {isError && (
+                      <Chip color="#f87171">
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          <Icon name="alert" size={12} color="#f87171" />
+                          Error
+                        </span>
+                      </Chip>
+                    )}
                     {isLoading && <div style={{ display: "flex", alignItems: "center", gap: 6 }}><Spinner size={12} color={s.color} /></div>}
                     {!isOk && !isLoading && <Chip color="#475569">Not Set</Chip>}
                   </div>
@@ -599,33 +870,52 @@ function IntegrationsView({ integrations, creds, setCreds, onSync }) {
   );
 }
 
-/* ─── TODO VIEW ──────────────────────────────────────────── */
+/* â”€â”€â”€ TODO VIEW â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 function TodoView({ todos, setTodos }) {
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ title: "", priority: "Medium", due: "" });
+  const visibleTodos = getVisibleItems(todos);
 
   function add() {
     if (!form.title.trim()) return;
-    setTodos(p => [...p, { id: `todo-${Date.now()}`, ...form, done: false }]);
+    setTodos((current) => [
+      ...current,
+      markItemUpdated(
+        {
+          id: `todo-${Date.now()}`,
+          done: false,
+          createdAt: nowIso(),
+        },
+        form,
+      ),
+    ]);
     setShowAdd(false);
     setForm({ title: "", priority: "Medium", due: "" });
   }
-  function toggle(id) { setTodos(p => p.map(t => t.id === id ? { ...t, done: !t.done } : t)); }
-  function remove(id) { setTodos(p => p.filter(t => t.id !== id)); }
+  function toggle(id) {
+    setTodos((current) => current.map((todo) => (
+      todo.id === id ? markItemUpdated(todo, { done: !todo.done }) : todo
+    )));
+  }
+  function remove(id) {
+    setTodos((current) => current.map((todo) => (
+      todo.id === id ? markItemDeleted(todo) : todo
+    )));
+  }
 
-  const pending = todos.filter(t => !t.done);
-  const done = todos.filter(t => t.done);
+  const pending = visibleTodos.filter(t => !t.done);
+  const done = visibleTodos.filter(t => t.done);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <SectionLabel noMargin>{todos.length} Tasks</SectionLabel>
+        <SectionLabel noMargin>{visibleTodos.length} Tasks</SectionLabel>
         <button onClick={() => setShowAdd(true)} className="btn" style={{ padding: "8px 16px", background: `${V}20`, border: `1px solid ${V}44`, borderRadius: 10, color: "#a78bfa", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>+ Add Task</button>
       </div>
 
       <div>
         <div style={{ fontSize: 11, fontWeight: 700, color: "#475569", marginBottom: 10, fontFamily: "'JetBrains Mono',monospace", letterSpacing: "0.08em" }}>PENDING</div>
-        {pending.length === 0 ? <Empty>All caught up! 🎉</Empty> : pending.map(t => (
+        {pending.length === 0 ? <Empty><span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><Icon name="spark" size={14} color={G} />All caught up!</span></Empty> : pending.map(t => (
           <div key={t.id} style={{ display: "flex", gap: 12, padding: "10px 14px", marginBottom: 8, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: 10, alignItems: "flex-start" }}>
             <input type="checkbox" checked={t.done} onChange={() => toggle(t.id)} style={{ marginTop: 3, cursor: "pointer", accentColor: prioColor(t.priority) }} />
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -635,7 +925,7 @@ function TodoView({ todos, setTodos }) {
                 {t.due && <span style={{ fontSize: 11, color: "#475569", fontFamily: "'JetBrains Mono',monospace" }}>{t.due}</span>}
               </div>
             </div>
-            <button onClick={() => remove(t.id)} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer", fontSize: 16 }}>×</button>
+            <button onClick={() => remove(t.id)} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer", fontSize: 16 }}>Ã—</button>
           </div>
         ))}
       </div>
@@ -653,7 +943,7 @@ function TodoView({ todos, setTodos }) {
                   {t.due && <span style={{ fontSize: 11, color: "#475569", fontFamily: "'JetBrains Mono',monospace" }}>{t.due}</span>}
                 </div>
               </div>
-              <button onClick={() => remove(t.id)} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer", fontSize: 16 }}>×</button>
+              <button onClick={() => remove(t.id)} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer", fontSize: 16 }}>Ã—</button>
             </div>
           ))}
         </div>
@@ -673,15 +963,15 @@ function TodoView({ todos, setTodos }) {
   );
 }
 
-/* ─── HELPERS ────────────────────────────────────────────── */
+/* â”€â”€â”€ HELPERS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 function Empty({ children, center }) {
   return <div style={{ padding: "28px 14px", textAlign: center ? "center" : "left", color: "#334155", fontSize: 13, fontStyle: "italic" }}>{children}</div>;
 }
 function SectionLabel({ children, small, noMargin }) {
-  return <div style={{ fontSize: small ? 12 : 16, fontWeight: 700, color: "#e2e8f0", marginBottom: noMargin ? 0 : 16, fontFamily: "'Syne',sans-serif" }}>{children}</div>;
+  return <div style={{ fontSize: small ? 12 : 16, fontWeight: 700, color: "#e2e8f0", marginBottom: noMargin ? 0 : 16, fontFamily: HEADER_FONT, letterSpacing: "-0.02em" }}>{children}</div>;
 }
 
-/* ─── PROFILE SETUP MODAL ────────────────────────────────── */
+/* â”€â”€â”€ PROFILE SETUP MODAL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 function LoginModal({ onComplete }) {
   const [form, setForm] = useState({ name: "", affiliation: "", bio: "" });
   const [step, setStep] = useState("welcome");
@@ -696,13 +986,13 @@ function LoginModal({ onComplete }) {
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.95)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div style={{ background: "#0d1220", border: "2px solid " + V + "55", borderRadius: 24, padding: "40px 50px", maxWidth: 520, textAlign: "center", animation: "fadeUp 0.5s ease both" }}>
         {step === "welcome" && <>
-          <div style={{ fontSize: 32, marginBottom: 20 }}>👋</div>
-          <h1 style={{ fontSize: 24, fontWeight: 700, color: "#e2e8f0", marginBottom: 14, fontFamily: "'Syne',sans-serif" }}>Welcome to Reeza</h1>
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: 20 }}><BrandMark size={56} /></div>
+          <h1 style={{ fontSize: 24, fontWeight: 700, color: "#e2e8f0", marginBottom: 14, fontFamily: HEADER_FONT }}>Welcome to Reeza</h1>
           <p style={{ fontSize: 14, color: "#64748b", marginBottom: 28, lineHeight: 1.6 }}>Your personal research portfolio & publication tracker. Let's get you set up!</p>
           <button onClick={() => setStep("form")} style={{ width: "100%", padding: "12px", background: `${V}22`, border: `1px solid ${V}55`, borderRadius: 12, color: "#a78bfa", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Get Started</button>
         </>}
         {step === "form" && <>
-          <h2 style={{ fontSize: 18, fontWeight: 700, color: "#e2e8f0", marginBottom: 24, fontFamily: "'Syne',sans-serif" }}>Create Your Profile</h2>
+          <h2 style={{ fontSize: 18, fontWeight: 700, color: "#e2e8f0", marginBottom: 24, fontFamily: HEADER_FONT }}>Create Your Profile</h2>
           {[
             { label: "Full Name *",      key: "name",        placeholder: "Dr. Jane Smith",               type: "input"    },
             { label: "Affiliation *",    key: "affiliation", placeholder: "MIT, Stanford, etc.",           type: "input"    },
@@ -720,8 +1010,8 @@ function LoginModal({ onComplete }) {
           <button onClick={() => setStep("welcome")} style={{ width: "100%", padding: "12px", background: "transparent", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, color: "#64748b", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Back</button>
         </>}
         {step === "done" && <>
-          <div style={{ fontSize: 48, marginBottom: 16 }}>🎉</div>
-          <h2 style={{ fontSize: 18, fontWeight: 700, color: "#e2e8f0", marginBottom: 10, fontFamily: "'Syne',sans-serif" }}>All Set!</h2>
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}><Icon name="spark" size={34} color={G} /></div>
+          <h2 style={{ fontSize: 18, fontWeight: 700, color: "#e2e8f0", marginBottom: 10, fontFamily: HEADER_FONT }}>All Set!</h2>
           <p style={{ fontSize: 13, color: "#64748b" }}>Welcome {form.name}! Your profile is ready.</p>
         </>}
       </div>
@@ -729,17 +1019,12 @@ function LoginModal({ onComplete }) {
   );
 }
 
-/* ─── AUTH GATE ──────────────────────────────────────────── */
+/* â”€â”€â”€ AUTH GATE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 export default function App() {
   const { session, loading: authLoading, signIn, signUp } = useAuth();
 
   if (authLoading) {
-    return (
-      <div style={{ minHeight: "100vh", background: "#04080f", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-        <div style={{ width: 28, height: 28, border: "2px solid #8b5cf630", borderTopColor: "#8b5cf6", borderRadius: "50%", animation: "spin 0.7s linear infinite" }} />
-      </div>
-    );
+    return <LoadingScreen />;
   }
 
   if (!session) {
@@ -749,154 +1034,301 @@ export default function App() {
   return <AppInner user={session.user} />;
 }
 
-/* ─── MAIN APP ───────────────────────────────────────────── */
+/* â”€â”€â”€ MAIN APP â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 function AppInner({ user }) {
   const { signOut } = useAuth();
 
-  const storedData = loadFromStorage();
+  const storedData = useRef(normalizeUserData(loadFromStorage())).current;
   const isFirstVisit = !storedData?.profile?.name;
 
   const defaultTodos = [
-    { id: "1", title: "Finish Q1 research paper",          priority: "High",   due: "2024-03-15", done: false },
-    { id: "2", title: "Update GitHub repos documentation", priority: "Medium", due: "",           done: false },
-    { id: "3", title: "Submit dataset to Zenodo",          priority: "High",   due: "2024-03-20", done: false },
+    markItemUpdated({ id: "1", createdAt: nowIso() }, { title: "Finish Q1 research paper", priority: "High", due: "2024-03-15", done: false }),
+    markItemUpdated({ id: "2", createdAt: nowIso() }, { title: "Update GitHub repos documentation", priority: "Medium", due: "", done: false }),
+    markItemUpdated({ id: "3", createdAt: nowIso() }, { title: "Submit dataset to Zenodo", priority: "High", due: "2024-03-20", done: false }),
   ];
-
-  const [view, setView]                 = useState("dashboard");
-  const [showLogin, setShowLogin]       = useState(isFirstVisit);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [profile, setProfile]           = useState(storedData?.profile       || { name: "", affiliation: "", bio: "" });
-  const [outputs, setOutputs]           = useState(storedData?.outputs       || []);
-  const [todos, setTodos]               = useState(storedData?.todos         || defaultTodos);
-  const [integrations, setIntegrations] = useState(storedData?.integrations  || {
+  const defaultIntegrations = sanitizeIntegrations({
     orcid:    { status: "idle", count: 0, error: null },
     zenodo:   { status: "idle", count: 0, error: null },
     github:   { status: "idle", count: 0, error: null },
     crossref: { status: "idle", count: 0, error: null },
   });
-  const [creds, setCreds]               = useState(storedData?.creds         || { orcidId: "", zenodoToken: "", githubUsername: "" });
-  const [lastSync, setLastSync]         = useState(storedData?.lastSync      || null);
 
-  // ── Load from Supabase on mount ───────────────────────────
+  const [view, setView]                 = useState("dashboard");
+  const [showLogin, setShowLogin]       = useState(isFirstVisit);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [hydrated, setHydrated]         = useState(false);
+  const [profile, setProfile]           = useState(storedData?.profile       || stampSection({}, { name: "", affiliation: "", bio: "" }));
+  const [outputs, setOutputs]           = useState(storedData?.outputs       || []);
+  const [todos, setTodos]               = useState(storedData?.todos?.length ? storedData.todos : defaultTodos);
+  const [integrations, setIntegrations] = useState(storedData?.integrations  || defaultIntegrations);
+  const [creds, setCreds]               = useState(storedData?.creds         || stampSection({}, { orcidId: "", zenodoToken: "", githubUsername: "" }));
+  const [lastSync, setLastSync]         = useState(storedData?.lastSync      || null);
+  const applyingRemoteRef = useRef(false);
+  const saveTimerRef = useRef(null);
+  const saveInFlightRef = useRef(false);
+  const saveQueuedRef = useRef(false);
+  const latestSnapshotRef = useRef(storedData);
+  const syncRef = useRef(null);
+
+  const applySnapshot = useCallback((data) => {
+    if (!data) return;
+    const normalized = normalizeUserData(data);
+    applyingRemoteRef.current = true;
+    latestSnapshotRef.current = normalized;
+    setProfile(normalized.profile);
+    setOutputs(normalized.outputs);
+    setTodos(normalized.todos);
+    setIntegrations(normalized.integrations);
+    setCreds(normalized.creds);
+    setLastSync(normalized.lastSync);
+    setShowLogin(!normalized.profile?.name);
+  }, []);
+
+  const flushSave = useCallback(async (snapshot) => {
+    if (!snapshot) return;
+    if (saveInFlightRef.current) {
+      saveQueuedRef.current = true;
+      return;
+    }
+
+    saveInFlightRef.current = true;
+    try {
+      const saved = await saveUserData(null, snapshot);
+      if (saved) {
+        saveToStorage(saved);
+        applySnapshot(saved);
+      }
+    } catch (err) {
+      console.error("Supabase save error:", err);
+    } finally {
+      saveInFlightRef.current = false;
+      if (saveQueuedRef.current) {
+        saveQueuedRef.current = false;
+        await flushSave(latestSnapshotRef.current);
+      }
+    }
+  }, [applySnapshot]);
+
+  // â”€â”€ Load from Supabase on mount â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   useEffect(() => {
+    let cancelled = false;
+
     (async () => {
       try {
         const serverData = await fetchUserData();
-        if (serverData) {
-          if (serverData.profile?.name)             { setProfile(serverData.profile); setShowLogin(false); }
-          if (Array.isArray(serverData.outputs))      setOutputs(serverData.outputs);
-          if (Array.isArray(serverData.todos))        setTodos(serverData.todos);
-          if (serverData.integrations)                setIntegrations(serverData.integrations);
-          if (serverData.creds)                       setCreds(serverData.creds);
-          if (serverData.lastSync)                    setLastSync(serverData.lastSync);
+        if (!cancelled && serverData) {
+          applySnapshot(serverData);
+          setHydrated(true);
+          return;
         }
       } catch (err) {
         console.warn("Could not fetch from Supabase, using local cache:", err);
       }
+
+      if (!cancelled && storedData) {
+        applySnapshot(storedData);
+      }
+
+      if (!cancelled) {
+        setHydrated(true);
+      }
     })();
-  }, [user.id]);
 
-  // ── Save to Supabase + localStorage on every change ───────
-  useEffect(() => {
-    const data = { profile, outputs, todos, integrations, creds, lastSync };
-    saveToStorage(data);
-    saveUserData(null, data).catch(err => console.error("Supabase save error:", err));
-  }, [profile, outputs, todos, integrations, creds, lastSync]);
+    return () => {
+      cancelled = true;
+    };
+  }, [applySnapshot, user.id]);
 
-  // ── Hourly sync ───────────────────────────────────────────
   useEffect(() => {
+    let unsubscribe = null;
+    let active = true;
+
+    (async () => {
+      try {
+        unsubscribe = await subscribeToUserData((remoteData) => {
+          if (!active || !remoteData) return;
+          applySnapshot(mergeUserData(remoteData, latestSnapshotRef.current));
+        });
+      } catch (err) {
+        console.warn("Realtime sync unavailable:", err);
+      }
+    })();
+
+    return () => {
+      active = false;
+      if (typeof unsubscribe === "function") {
+        unsubscribe();
+      }
+    };
+  }, [applySnapshot, user.id]);
+
+  // â”€â”€ Save to Supabase + localStorage on every change â”€â”€â”€â”€â”€â”€â”€
+  useEffect(() => {
+    const snapshot = normalizeUserData({ profile, outputs, todos, integrations, creds, lastSync });
+    latestSnapshotRef.current = snapshot;
+    saveToStorage(snapshot);
+
+    if (!hydrated) return;
+
+    if (applyingRemoteRef.current) {
+      applyingRemoteRef.current = false;
+      return;
+    }
+
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+    }
+
+    saveTimerRef.current = setTimeout(() => {
+      saveTimerRef.current = null;
+      void flushSave(latestSnapshotRef.current);
+    }, SYNC_DEBOUNCE_MS);
+
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+    };
+  }, [creds, flushSave, hydrated, integrations, lastSync, outputs, profile, todos]);
+
+  // â”€â”€ Hourly sync â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  useEffect(() => {
+    if (!hydrated) return undefined;
     const timer = setInterval(() => {
-      setLastSync(new Date().toISOString());
-      sync(null, creds);
+      setLastSync(nowIso());
+      if (syncRef.current) {
+        syncRef.current(null, creds);
+      }
     }, 3600000);
     return () => clearInterval(timer);
-  }, [creds]);
+  }, [creds, hydrated]);
 
   const sync = useCallback(async (platform, localCreds = creds) => {
-    const newIntegrations = { ...integrations };
+    const workingIntegrations = sanitizeIntegrations(integrations);
+
+    const setIntegrationState = (key, nextState) => {
+      workingIntegrations[key] = { ...workingIntegrations[key], ...nextState };
+      setIntegrations(stampSection(workingIntegrations, {}));
+    };
 
     const doSync = async (key, fn) => {
       try {
-        newIntegrations[key] = { status: "loading", count: 0, error: null };
-        setIntegrations({ ...newIntegrations });
+        setIntegrationState(key, { status: "loading", count: 0, error: null });
         const res = await fn();
-        newIntegrations[key] = { status: "ok", count: res.length, error: null };
-        setOutputs(p => [...p.filter(o => o.source !== key), ...res]);
+        setIntegrationState(key, { status: "ok", count: res.length, error: null });
+        setOutputs((current) => {
+          const previousById = new Map(current.map((output) => [output.id, output]));
+          const nextSourceOutputs = res.map((output) => markItemUpdated(previousById.get(output.id) || output, output));
+          return [...current.filter((output) => output.source !== key), ...nextSourceOutputs];
+        });
       } catch (e) {
-        newIntegrations[key] = { status: "error", count: 0, error: e.message };
+        setIntegrationState(key, { status: "error", count: 0, error: e.message });
       }
-      setIntegrations({ ...newIntegrations });
     };
 
     if (!platform || platform === "orcid")    { if (localCreds.orcidId)        await doSync("orcid",  () => fetchORCID(localCreds.orcidId).then(enrichWithCitations)); }
     if (!platform || platform === "zenodo")   { if (localCreds.zenodoToken)    await doSync("zenodo", () => fetchZenodo(localCreds.zenodoToken)); }
     if (!platform || platform === "github")   { if (localCreds.githubUsername) await doSync("github", () => fetchGitHub(localCreds.githubUsername)); }
     if (!platform || platform === "crossref") {
-      const existing = outputs.filter(o => o.doi && ["Paper","Preprint","Report"].includes(o.type));
+      const existing = getVisibleItems(outputs).filter(o => o.doi && ["Paper","Preprint","Report"].includes(o.type));
       if (existing.length > 0) {
-        newIntegrations.crossref = { status: "loading", count: 0, error: null };
-        setIntegrations({ ...newIntegrations });
+        setIntegrationState("crossref", { status: "loading", count: 0, error: null });
         const enriched = await enrichWithCitations(existing);
-        setOutputs(p => p.map(o => enriched.find(e => e.id === o.id) || o));
-        newIntegrations.crossref = { status: "ok", count: enriched.length, error: null };
-        setIntegrations({ ...newIntegrations });
+        setOutputs((current) => current.map((output) => {
+          const nextOutput = enriched.find((item) => item.id === output.id);
+          return nextOutput ? markItemUpdated(output, nextOutput) : output;
+        }));
+        setIntegrationState("crossref", { status: "ok", count: enriched.length, error: null });
       }
     }
-  }, [integrations, outputs, creds]);
+    setLastSync(nowIso());
+  }, [creds, integrations, outputs]);
+  syncRef.current = sync;
 
   return (
     <>
       <style>{CSS}</style>
-      {showLogin && <LoginModal onComplete={p => { setProfile(p); setShowLogin(false); }} />}
-      <div style={{ display: "flex", flexDirection: "column", width: "100vw", height: "100vh", background: "#04080f", color: "#e2e8f0", fontFamily: "'Syne',sans-serif", overflow: "hidden" }}>
-
+      {showLogin && <LoginModal onComplete={p => { setProfile((current) => stampSection(current, p)); setShowLogin(false); }} />}
+      <div style={{ display: "flex", flexDirection: "column", width: "100vw", height: "100vh", background: "radial-gradient(circle at top, rgba(139,92,246,0.18), transparent 24%), linear-gradient(180deg, #030712 0%, #07101d 100%)", color: "#e2e8f0", fontFamily: "'Inter','Syne',sans-serif", overflow: "hidden" }}>
         {/* Header */}
-        <header style={{ background: "#0a0e18", borderBottom: "1px solid rgba(255,255,255,0.05)", padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", zIndex: 50, flexShrink: 0 }}>
+        <header style={{ background: "linear-gradient(180deg, rgba(6,10,18,0.96), rgba(6,10,18,0.82))", backdropFilter: "blur(16px)", borderBottom: "1px solid rgba(255,255,255,0.06)", padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", zIndex: 50, flexShrink: 0, boxShadow: "0 18px 40px rgba(0,0,0,0.22)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <Avatar name={profile.name} size={36} />
             <div>
-              <div style={{ fontSize: 14, fontWeight: 700, fontFamily: "'Syne',sans-serif" }}>{profile.name}</div>
-              <div style={{ fontSize: 10, color: "#475569" }}>{profile.affiliation}</div>
+              <div style={{ fontSize: 15, fontWeight: 700, fontFamily: HEADER_FONT, letterSpacing: "-0.03em" }}>{profile.name || "Researcher"}</div>
+              <div style={{ fontSize: 10, color: "#6f86a8" }}>{profile.affiliation || "Unified research workspace"}</div>
             </div>
           </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <div className="desktop-nav" style={{ display: "flex", gap: 8 }}>
-              {[
-                { id: "dashboard",    label: "Dashboard",    icon: "📊" },
-                { id: "projects",     label: "Projects",     icon: "📁" },
-                { id: "integrations", label: "Integrations", icon: "🔗" },
-                { id: "todo",         label: "Todo",         icon: "✓"  },
-              ].map(tab => (
-                <button key={tab.id} onClick={() => { setView(tab.id); setMobileMenuOpen(false); }} className="nav-item" style={{
-                  padding: "6px 12px", background: view === tab.id ? `${V}22` : "transparent",
-                  border: view === tab.id ? `1px solid ${V}44` : "1px solid transparent",
-                  borderRadius: 8, color: view === tab.id ? "#a78bfa" : "#475569", fontSize: 12, fontWeight: 600, cursor: "pointer", transition: "all 0.15s"
-                }}>{tab.icon} {tab.label}</button>
-              ))}
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <div className="desktop-nav" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {NAV_ITEMS.map(tab => {
+                const active = view === tab.id;
+                return (
+                  <button key={tab.id} onClick={() => { setView(tab.id); setMobileMenuOpen(false); }} className="nav-item" style={{
+                    padding: "9px 13px",
+                    background: active ? "linear-gradient(180deg, rgba(139,92,246,0.18), rgba(139,92,246,0.08))" : "rgba(255,255,255,0.02)",
+                    border: active ? "1px solid rgba(139,92,246,0.4)" : "1px solid rgba(255,255,255,0.05)",
+                    borderRadius: 12,
+                    color: active ? "#eef2ff" : "#8ea0bc",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    transition: "all 0.15s",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    boxShadow: active ? "0 12px 28px rgba(139,92,246,0.16)" : "none"
+                  }}>
+                    <Icon name={tab.icon} size={14} color={active ? "#c4b5fd" : "#70839f"} />
+                    <span>{tab.label}</span>
+                  </button>
+                );
+              })}
             </div>
-            <button onClick={() => setShowLogin(true)} style={{ fontSize: 14, background: "none", border: "none", color: "#64748b", cursor: "pointer", padding: "4px 8px" }} title="Edit profile">✏️</button>
-            <button onClick={signOut} style={{ fontSize: 12, background: "none", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, color: "#475569", cursor: "pointer", padding: "4px 10px" }}>Sign out</button>
-            {lastSync && <span className="last-sync" style={{ fontSize: 9, color: "#334155", fontFamily: "'JetBrains Mono',monospace" }}>synced {new Date(lastSync).toLocaleTimeString()}</span>}
-            <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="hamburger-btn" style={{ display: "none", background: "none", border: "none", color: "#64748b", fontSize: 20, cursor: "pointer", padding: "0 4px" }}>☰</button>
+            <button onClick={() => setShowLogin(true)} style={{ width: 36, height: 36, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 12, color: "#94a3b8", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }} title="Edit profile">
+              <Icon name="edit" size={15} color="#94a3b8" />
+            </button>
+            <button onClick={signOut} style={{ fontSize: 12, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, color: "#cbd5e1", cursor: "pointer", padding: "8px 12px", display: "flex", alignItems: "center", gap: 8, fontWeight: 700 }}>
+              <Icon name="logout" size={14} color="#94a3b8" />
+              <span>Sign out</span>
+            </button>
+            {lastSync && <span className="last-sync" style={{ fontSize: 9, color: "#4b5d79", fontFamily: "'JetBrains Mono',monospace" }}>synced {new Date(lastSync).toLocaleTimeString()}</span>}
+            <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="hamburger-btn" style={{ display: "none", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 12, color: "#94a3b8", cursor: "pointer", padding: 8, alignItems: "center", justifyContent: "center" }}>
+              <Icon name="menu" size={18} color="#94a3b8" />
+            </button>
           </div>
         </header>
 
         {/* Mobile Menu */}
         {mobileMenuOpen && (
-          <div style={{ background: "#0a0e18", borderBottom: "1px solid rgba(255,255,255,0.05)", display: "flex", flexDirection: "column", gap: 4, padding: "8px 12px", zIndex: 49 }} className="mobile-menu">
-            {[
-              { id: "dashboard",    label: "Dashboard",    icon: "📊" },
-              { id: "projects",     label: "Projects",     icon: "📁" },
-              { id: "integrations", label: "Integrations", icon: "🔗" },
-              { id: "todo",         label: "Todo",         icon: "✓"  },
-            ].map(tab => (
-              <button key={tab.id} onClick={() => { setView(tab.id); setMobileMenuOpen(false); }} style={{
-                padding: "10px 12px", background: view === tab.id ? `${V}22` : "transparent",
-                border: view === tab.id ? `1px solid ${V}44` : "none",
-                borderRadius: 8, color: view === tab.id ? "#a78bfa" : "#a0aec0", fontSize: 13, fontWeight: 600, cursor: "pointer", transition: "all 0.15s", textAlign: "left"
-              }}>{tab.icon} {tab.label}</button>
-            ))}
-            <button onClick={signOut} style={{ padding: "10px 12px", background: "transparent", border: "none", borderRadius: 8, color: "#475569", fontSize: 13, fontWeight: 600, cursor: "pointer", textAlign: "left" }}>Sign out</button>
+          <div style={{ background: "rgba(6,10,18,0.98)", borderBottom: "1px solid rgba(255,255,255,0.05)", display: "flex", flexDirection: "column", gap: 6, padding: "10px 12px", zIndex: 49 }} className="mobile-menu">
+            {NAV_ITEMS.map(tab => {
+              const active = view === tab.id;
+              return (
+                <button key={tab.id} onClick={() => { setView(tab.id); setMobileMenuOpen(false); }} style={{
+                  padding: "11px 12px",
+                  background: active ? "rgba(139,92,246,0.16)" : "transparent",
+                  border: active ? "1px solid rgba(139,92,246,0.36)" : "1px solid rgba(255,255,255,0.04)",
+                  borderRadius: 12,
+                  color: active ? "#eef5ff" : "#a0aec0",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  transition: "all 0.15s",
+                  textAlign: "left",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10
+                }}>
+                  <Icon name={tab.icon} size={15} color={active ? "#c4b5fd" : "#7f91ae"} />
+                  {tab.label}
+                </button>
+              );
+            })}
+            <button onClick={signOut} style={{ padding: "11px 12px", background: "transparent", border: "1px solid rgba(255,255,255,0.04)", borderRadius: 12, color: "#a0aec0", fontSize: 13, fontWeight: 700, cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: 10 }}>
+              <Icon name="logout" size={15} color="#7f91ae" />
+              Sign out
+            </button>
           </div>
         )}
 
@@ -911,3 +1343,5 @@ function AppInner({ user }) {
     </>
   );
 }
+
+
